@@ -197,3 +197,7 @@ func reportProbe(out io.Writer, label string, err error) liveResult {
 	fmt.Fprintf(out, "%s %s %s%v\n", label, marker, prefix, err)
 	return verdict
 }
+
+func init() {
+	doctorCmd.Flags().BoolVar(&doctorOffline, "offline", false, "skip the live API check; only verify that credentials resolve")
+}

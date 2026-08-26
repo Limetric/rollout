@@ -73,6 +73,12 @@ func TestPlatformDefinitions(t *testing.T) {
 			if p.Title == "" || p.Short == "" {
 				t.Error("platform needs a Title and a Short description for help text")
 			}
+			if p.Doctor == nil {
+				t.Error("platform has no doctor check")
+			}
+			if p.ShowConfig == nil {
+				t.Error("platform contributes nothing to `rollout config show`")
+			}
 		})
 	}
 }

@@ -24,4 +24,10 @@ var playPlatform = registerPlatform(&Platform{
 	// Keep this list in sync with registerPlayTools in mcp_play.go — every tool
 	// is exposed both ways, backed by the same handler.
 	Commands: []*cobra.Command{},
+
+	ConfigCommands: []*cobra.Command{playSetPackageCmd, playSetDeveloperIDCmd},
+
+	ShowConfig: playShowConfig,
+	Doctor:     playDoctor,
+	Configured: playConfigured,
 })
