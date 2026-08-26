@@ -22,6 +22,20 @@ type ConfirmResult struct {
 
 // runConfirm consumes the token and applies its staged mutation.
 func runConfirm(ctx context.Context, c mutationApplier, token string) (ConfirmResult, error) {
+	// Parity with the per-tool confirm path, but on a peek — before the
+	// single-use token is consumed — so a temporarily blocked confirm doesn't
+	// burn the token the user would need after fixing the configuration.
+	peeked, err := peekMutation(token)
+	if err != nil {
+		return ConfirmResult{}, err
+	}
+	cfg := loadSafetyConfig()
+	if err := checkBlockedOperation(peeked.Tool, cfg); err != nil {
+		return ConfirmResult{}, toolError(peeked.Tool, err)
+	}
+	if err := checkRolloutFraction(peeked.RolloutFraction, cfg); err != nil {
+		return ConfirmResult{}, toolError(peeked.Tool, err)
+	}
 	p, err := consumeMutation(token)
 	if err != nil {
 		return ConfirmResult{}, err

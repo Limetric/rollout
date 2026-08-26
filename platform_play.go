@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +31,7 @@ var playPlatform = registerPlatform(&Platform{
 	ConfigCommands: []*cobra.Command{playSetPackageCmd, playSetDeveloperIDCmd},
 
 	RegisterMCP: registerPlayTools,
+	NewApplier:  func(ctx context.Context) (mutationApplier, error) { return newPlayClient(ctx) },
 	ShowConfig:  playShowConfig,
 	Doctor:      playDoctor,
 	Configured:  playConfigured,

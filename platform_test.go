@@ -122,6 +122,17 @@ func TestPlayCommandsMatchRegistration(t *testing.T) {
 	}
 }
 
+// TestPlatformWriteToolsCanConfirm keeps `rollout confirm <token>` honest: a
+// platform that stages writes has to be able to apply them, and the routing is
+// by name, so a missing hook only shows up when a user confirms a token.
+func TestPlatformWriteToolsCanConfirm(t *testing.T) {
+	for _, p := range platforms() {
+		if p.NewApplier == nil {
+			t.Errorf("platform %q cannot apply a confirmed write — `rollout confirm` would fail on its tokens", p.Name)
+		}
+	}
+}
+
 func TestLookupPlatformUnknown(t *testing.T) {
 	_, err := lookupPlatform("appstore")
 	if err == nil {

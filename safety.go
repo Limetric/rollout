@@ -95,6 +95,17 @@ func stageWrite(w pendingWrite) (*PendingMutation, error) {
 	if w.Platform == "" {
 		return nil, fmt.Errorf("internal error: %s staged a write without a platform", w.Tool)
 	}
+	// The guard rails run before a token is handed out, so a blocked or
+	// over-cap write never gets a confirmation the user could act on. They run
+	// again at confirm time (see enforceGuards) against the configuration in
+	// force then.
+	safety := loadSafetyConfig()
+	if err := checkBlockedOperation(w.Tool, safety); err != nil {
+		return nil, err
+	}
+	if err := checkRolloutFraction(w.RolloutFraction, safety); err != nil {
+		return nil, err
+	}
 	tok, err := newToken()
 	if err != nil {
 		return nil, err
@@ -110,7 +121,7 @@ func stageWrite(w pendingWrite) (*PendingMutation, error) {
 		Track:           w.Track,
 		RolloutFraction: w.RolloutFraction,
 		CreatedAt:       time.Now().UTC(),
-		RequiresDouble:  w.RequiresDouble,
+		RequiresDouble:  w.RequiresDouble || requiresDoubleConfirmation(w, safety),
 	}
 	dir, err := stateDir()
 	if err != nil {

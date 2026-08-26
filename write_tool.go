@@ -66,6 +66,13 @@ func applyConfirmed(ctx context.Context, c mutationApplier, tool, confirm string
 // operations for their second confirmation, otherwise applies and audits.
 // Shared by the per-tool confirm path (applyConfirmed) and `rollout confirm`.
 func applyConsumed(ctx context.Context, c mutationApplier, p *PendingMutation) (WriteResult, error) {
+	// The guard rails are re-checked against the configuration in force *now*,
+	// not the one that applied when the preview was staged: a block or a
+	// tightened cap added in between must still stop this write, and a
+	// production lock turned on since must still escalate it.
+	if err := enforceGuards(p, loadSafetyConfig()); err != nil {
+		return WriteResult{}, toolError(p.Tool, err)
+	}
 	// Destructive operations take two confirmations: the first consume
 	// re-stages under a fresh token instead of applying.
 	if p.RequiresDouble && !p.DoubleConfirmed {

@@ -18,6 +18,11 @@ func isolateState(t *testing.T) string {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("HOME", dir)
+	// The guard rails read the environment on every stage and confirm; a
+	// developer's own PLAY_* settings must not decide a test's outcome.
+	for _, key := range []string{"PLAY_PRODUCTION_LOCK", "PLAY_MAX_ROLLOUT_FRACTION", "PLAY_BLOCKED_OPS"} {
+		t.Setenv(key, "")
+	}
 	// os.UserConfigDir is platform-specific (XDG_CONFIG_HOME on Linux,
 	// ~/Library/Application Support on macOS), so ask for the resolved path
 	// rather than assuming one layout.

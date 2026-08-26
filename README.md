@@ -83,9 +83,38 @@ infrastructure is unnamespaced but takes a platform argument:
 
 No mutating call executes on first request. A write tool returns a preview and a
 confirm token valid for 10 minutes; you apply it with `--confirm <token>` or
-`rollout confirm <token>`. Halting or completing a production rollout, and any
-deletion, takes a second confirmation. Every applied write — and every failed
-apply — is appended to an audit log.
+`rollout confirm <token>`. Every applied write — and every failed apply — is
+appended to an audit log you can read with `rollout audit`.
+
+Writes are transactional. A release write opens a fresh edit, mutates one
+release, validates, and commits; anything that fails along the way deletes the
+edit, so nothing is left half-staged. A release write also reads the track
+first and touches only the release it names — an in-progress rollout is never
+dropped by a write that did not mention it.
+
+Two confirmations are required for the operations that cannot be undone by
+running the opposite command: halting a rollout, completing a production
+rollout, and deleting a listing or its images.
+
+### Guard rails
+
+Optional, and off by default. Set them in the environment or in `config.toml`:
+
+```toml
+[play.safety]
+production_lock = true                 # PLAY_PRODUCTION_LOCK=1
+max_rollout_fraction = 0.2             # PLAY_MAX_ROLLOUT_FRACTION=0.2
+blocked_operations = ["halt_release"]  # PLAY_BLOCKED_OPS=halt_release
+```
+
+| Setting | Effect |
+| --- | --- |
+| `production_lock` | Every write touching the `production` track takes a second confirmation |
+| `max_rollout_fraction` | Refuses a write past this staged-rollout fraction — `0.2` lets CI stage and grow a rollout but never finish one |
+| `blocked_operations` | Refuses these tools outright |
+
+They are re-checked when a token is confirmed, not only when it is issued, so
+tightening one always wins over a preview that is already in flight.
 
 See `docs/play.md` for setup and the full tool list, and `docs/name-map.md` for
 the CLI ↔ MCP name map.
