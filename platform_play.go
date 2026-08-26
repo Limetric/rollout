@@ -48,6 +48,12 @@ var playPlatform = registerPlatform(&Platform{
 		// Reviews.
 		reviewsCmd,
 		reviewCmd,
+
+		// Reporting.
+		vitalsCmd,
+		errorsCmd,
+		errorCmd,
+		anomaliesCmd,
 	},
 
 	Login:          playLoginCmd,

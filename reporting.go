@@ -220,6 +220,25 @@ func addTimePoint(v url.Values, prefix string, t *timePoint) {
 	}
 }
 
+// searchErrorReports lists the individual reports behind an issue cluster.
+func (c *Client) searchErrorReports(ctx context.Context, pkg string, q errorIssueQuery) ([]json.RawMessage, bool, error) {
+	var reports []json.RawMessage
+	truncated, err := eachPage(func(token string) (string, bool, error) {
+		query := errorSearchValues(q, token)
+		var page struct {
+			pagedResponse
+			ErrorReports []json.RawMessage `json:"errorReports"`
+		}
+		url := c.reportingURL(fmt.Sprintf("apps/%s/errorReports:search", pkg))
+		if err := c.doAt(ctx, url, http.MethodGet, query, nil, &page, retryIdempotent); err != nil {
+			return "", false, fmt.Errorf("search error reports for %s: %w", pkg, err)
+		}
+		reports = append(reports, page.ErrorReports...)
+		return page.next(), true, nil
+	})
+	return reports, truncated, err
+}
+
 // listAnomalies lists the metric anomalies Play has detected — the "something
 // changed" signal, as opposed to the raw metric values a query returns.
 func (c *Client) listAnomalies(ctx context.Context, pkg, filter string) ([]json.RawMessage, bool, error) {

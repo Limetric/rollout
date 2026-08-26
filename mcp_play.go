@@ -154,5 +154,27 @@ func registerPlayTools(ctx context.Context, reg *toolRegistrar) error {
 		"Reply publicly to a review, at most 350 characters. The preview quotes the review being answered, because the failure worth preventing is replying to the wrong one — and unlike a release, a reply is not staged in an edit: it is live the moment it is confirmed.",
 		runReplyReview)
 
+	// --- reporting (Android vitals) ---
+
+	addTool(reg, client, "vitals",
+		"Query an Android vitals metric set — crash rate, ANR rate, error counts, excessive wakeups, stuck wakelocks, slow rendering, slow starts, or low-memory kills — over a date range, optionally broken down by dimensions such as versionCode or countryCode. Data lags real time by up to a few days, and versions with too few users are withheld for privacy.",
+		runVitals)
+
+	addTool(reg, client, "vitals_summary",
+		"Check whether an app is healthy enough to keep rolling out: the worst crash and ANR rate in the window against Play's bad-behaviour thresholds (1.09% and 0.47%), with an ok/warn status per metric and a single ok flag to gate on. An unknown rate reports as not-ok — it is a reason to look, not to ship.",
+		runVitalsSummary)
+
+	addTool(reg, client, "error_issues",
+		"List crash and ANR issue clusters, most-users-affected first, with report counts, distinct users, the failing cause and location, and the version range they span.",
+		runErrorIssues)
+
+	addTool(reg, client, "error_reports",
+		"List the individual reports behind one issue cluster — this is where the stack traces, device models, and OS versions are.",
+		runErrorReports)
+
+	addTool(reg, client, "anomalies",
+		"List the metric anomalies Play itself has flagged. An empty list means nothing crossed Play's own detection thresholds, which is not the same as the app being healthy — use play_vitals_summary for that.",
+		runAnomalies)
+
 	return nil
 }
