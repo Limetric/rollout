@@ -101,10 +101,13 @@ Google Play provider:
 ## Conventions (match these)
 
 - All code is `package main` at the repo root. No `cmd/` or `internal/`.
-- New tool = new `tool_<name>.go` + `tool_<name>_test.go`. Register it in **two**
-  places: the platform's `Commands` (CLI) and its MCP registration function —
+- New tool = a `tool_<name>.go` (one file per tool, or per tool group where the
+  tools share preview logic) + its `_test.go`. Register it in **two** places:
+  the platform's `Commands` (CLI) and its MCP registration function —
   `playPlatform` in `platform_play.go` and `registerPlayTools` in `mcp_play.go`.
-  Keep the two in sync; `mcp_test.go` asserts they match.
+  The CLI groups by noun and MCP names lead with the verb, so each command
+  declares its MCP name with `Annotations: mcpTool("…")`; `mcp_test.go` asserts
+  the two sets match, and `docs_test.go` asserts the docs do too.
 - MCP tool names are written unprefixed at the registration site; the registrar
   applies the platform prefix. Never hand-write `play_` into a tool name.
 - Write/mutating tools MUST go through `safety.go`: return a preview + confirm
@@ -146,7 +149,12 @@ Google Play provider:
 ## Key references
 
 - User-facing docs: `README.md` (shared concepts), `docs/play.md` (setup, login,
-  tool coverage), `docs/name-map.md` (CLI ↔ MCP name map).
+  tool coverage, troubleshooting), `docs/reporting.md` (vitals metric sets and
+  thresholds), `docs/name-map.md` (CLI ↔ MCP name map). `docs_test.go` fails the
+  build when a tool is served but undocumented, or documented but not served.
+- Agent skill: `plugins/rollout/skills/rollout/SKILL.md`, surfaced through
+  `.claude-plugin/marketplace.json`. It has to list every command, and a test
+  checks that.
 - Android Publisher API v3: <https://developers.google.com/android-publisher/api-ref/rest>
 - Play Developer Reporting API v1beta1: <https://developers.google.com/play/developer/reporting>
 - MCP Go SDK: <https://github.com/modelcontextprotocol/go-sdk>

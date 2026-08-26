@@ -1,0 +1,14 @@
+{
+  "name": "rollout",
+  "owner": {
+    "name": "Limetric"
+  },
+  "description": "Skill for driving the rollout Google Play Console CLI and MCP server from Claude Code.",
+  "plugins": [
+    {
+      "name": "rollout",
+      "source": "./plugins/rollout",
+      "description": "Android release management, store listings, reviews, and vitals via the rollout CLI, with preview-then-confirm writes."
+    }
+  ]
+}

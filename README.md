@@ -5,17 +5,31 @@ A Google Play Console **CLI** and **MCP server** in one Go binary.
 `rollout` manages Android releases the way a release engineer actually works —
 upload an artifact, stage it to a track, watch the rollout, halt or complete it —
 and exposes exactly the same operations to an AI agent over MCP. Store listings,
-reviews, and vitals come along for the ride.
+reviews, and Android vitals come along for the ride.
 
 Every write is previewed and confirmed before it executes.
 
 ```bash
-rollout play tracks                      # CLI
+rollout play releases --format table
 ```
 
-```json
-{ "mcpServers": { "rollout": { "command": "rollout", "args": ["mcp"] } } }
 ```
+track       | status     | version_codes | rollout_percent | name
+------------+------------+---------------+-----------------+------
+production  | completed  | ["41"]        |                 | 1.4.0
+production  | inProgress | ["42"]        | 10              | 1.5.0
+beta        | completed  | ["43"]        |                 | 1.6.0
+```
+
+## Platforms
+
+| Platform | Namespace | Docs |
+| --- | --- | --- |
+| Google Play | `rollout play …` / `play_…` | [docs/play.md](docs/play.md) |
+
+The platform registry exists so a second store (App Store Connect is the obvious
+one) is a new file rather than an edit to the shared auth, config, and safety
+plumbing.
 
 ## Install
 
@@ -23,9 +37,22 @@ rollout play tracks                      # CLI
 go build -o build/rollout .
 ```
 
-Homebrew and release binaries arrive with v0.1.0.
+Release binaries and a Homebrew tap arrive with v0.1.0:
+
+```bash
+brew install Limetric/tap/rollout
+```
 
 ## Quick start
+
+```bash
+rollout login play                              # guided setup, ends with a live check
+rollout config play set-package com.example.app # so --package can be omitted
+rollout doctor play                             # opens and deletes a real edit
+rollout play tracks
+```
+
+For CI, skip the wizard entirely:
 
 ```bash
 export PLAY_SERVICE_ACCOUNT_FILE=/path/to/key.json
@@ -33,11 +60,9 @@ export PLAY_PACKAGE_NAME=com.example.app
 rollout doctor play
 ```
 
-Or sign in with your own Play Console account:
-
-```bash
-rollout login play
-```
+The one step that is easy to miss: the credential must be invited in Play
+Console → **Users & permissions**. Authenticating is not the same as having
+access to an app. See [docs/play.md](docs/play.md#prerequisites).
 
 ## MCP hosts
 
@@ -79,6 +104,29 @@ infrastructure is unnamespaced but takes a platform argument:
 | `rollout mcp` | Serve the tools over stdio |
 | `rollout version` | Print the version |
 
+## Credentials
+
+Two modes, and a service-account key wins when both are configured:
+
+- **Service-account JSON key** — headless, what Google recommends for the
+  Publisher API, and what CI should use.
+- **OAuth user sign-in** — `rollout login play` runs the loopback
+  authorization-code flow with PKCE against your own Console account.
+
+Refresh tokens live in a per-user token store (0600, under the config
+directory), never in `config.toml` and never in an environment variable.
+`ROLLOUT_TOKEN_STORE` relocates it for containers and CI.
+
+## Output
+
+Reads print JSON by default, so they pipe into `jq`. `--format table` and
+`--format csv` are there when a person or a spreadsheet is reading.
+
+```bash
+rollout play errors --days 7 --format table
+rollout play vitals --metric crashrate --dimension versionCode | jq '.rows'
+```
+
 ## Safety
 
 No mutating call executes on first request. A write tool returns a preview and a
@@ -94,7 +142,7 @@ dropped by a write that did not mention it.
 
 Two confirmations are required for the operations that cannot be undone by
 running the opposite command: halting a rollout, completing a production
-rollout, and deleting a listing or its images.
+rollout, and deleting a listing or a whole image type.
 
 ### Guard rails
 
@@ -116,8 +164,21 @@ blocked_operations = ["halt_release"]  # PLAY_BLOCKED_OPS=halt_release
 They are re-checked when a token is confirmed, not only when it is issued, so
 tightening one always wins over a preview that is already in flight.
 
-See `docs/play.md` for setup and the full tool list, and `docs/name-map.md` for
-the CLI ↔ MCP name map.
+## Documentation
+
+- [docs/play.md](docs/play.md) — setup, tool coverage, release semantics, troubleshooting
+- [docs/reporting.md](docs/reporting.md) — vitals metric sets, dimensions, thresholds
+- [docs/name-map.md](docs/name-map.md) — CLI ↔ MCP name map
+
+## Building from source
+
+```bash
+go build -o build/rollout .
+go test ./... -count=1
+go vet ./... && go tool staticcheck ./...
+```
+
+Contributor conventions are in [AGENTS.md](AGENTS.md).
 
 ## License
 

@@ -1,0 +1,16 @@
+{
+  "name": "rollout",
+  "version": "0.1.0",
+  "description": "Teaches Claude Code to drive the rollout CLI for Google Play — staged rollouts, store listings, reviews, and vitals with preview-then-confirm writes.",
+  "author": {
+    "name": "Limetric"
+  },
+  "repository": "https://github.com/Limetric/rollout",
+  "keywords": [
+    "google-play",
+    "android",
+    "release-management",
+    "staged-rollout",
+    "cli"
+  ]
+}

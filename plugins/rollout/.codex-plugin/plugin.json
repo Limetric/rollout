@@ -1,0 +1,34 @@
+{
+  "name": "rollout",
+  "version": "0.1.0",
+  "description": "Teaches Codex to drive the rollout CLI for Google Play — staged rollouts, store listings, reviews, and vitals with preview-then-confirm writes.",
+  "author": {
+    "name": "Limetric",
+    "url": "https://github.com/Limetric"
+  },
+  "repository": "https://github.com/Limetric/rollout",
+  "keywords": [
+    "google-play",
+    "android",
+    "release-management",
+    "staged-rollout",
+    "cli"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "rollout",
+    "shortDescription": "Drive the rollout CLI for Google Play — releases, listings, reviews, and vitals.",
+    "longDescription": "Teaches an agent when and how to drive the rollout CLI: reading tracks and releases, staging and growing a rollout, syncing store listings, replying to reviews, and checking Android vitals — with every write previewed and confirmed first.",
+    "developerName": "Limetric",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "What version is live on production?",
+      "Bump the production rollout to 25%.",
+      "Is the crash rate healthy enough to keep rolling out?"
+    ]
+  }
+}
