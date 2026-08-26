@@ -44,6 +44,10 @@ var playPlatform = registerPlatform(&Platform{
 		releaseCmd,
 		promoteCmd,
 		deobfuscationCmd,
+
+		// Reviews.
+		reviewsCmd,
+		reviewCmd,
 	},
 
 	Login:          playLoginCmd,

@@ -140,5 +140,19 @@ func registerPlayTools(ctx context.Context, reg *toolRegistrar) error {
 		"Reconcile a local metadata directory (the fastlane supply layout) with the store: per-locale text and, with images enabled, screenshots and graphics compared by SHA-256 so unchanged files are never re-uploaded. The whole plan is previewed and then applied in one edit — if any locale fails, none of it lands.",
 		runSyncListing)
 
+	// --- reviews ---
+
+	addTool(reg, client, "reviews",
+		"List user reviews with their existing developer replies. Two limits are the API's, not this tool's: Play returns reviews from the last week only, and only for apps that have a live production release — so an empty result is not evidence of no complaints. Star rating, version code, age, and answered-ness are filtered client-side.",
+		runReviews)
+
+	addTool(reg, client, "review",
+		"Read one review by id, optionally translated.",
+		runReview)
+
+	addTool(reg, client, "reply_review",
+		"Reply publicly to a review, at most 350 characters. The preview quotes the review being answered, because the failure worth preventing is replying to the wrong one — and unlike a release, a reply is not staged in an edit: it is live the moment it is confirmed.",
+		runReplyReview)
+
 	return nil
 }
