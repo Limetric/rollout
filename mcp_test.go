@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -169,5 +170,83 @@ func TestToolErrorNamesTheTool(t *testing.T) {
 	err := toolError("play_tracks", errors.New("boom"))
 	if !strings.Contains(err.Error(), "play_tracks") {
 		t.Errorf("error should name the tool: %v", err)
+	}
+}
+
+// TestCLIAndMCPSurfacesMatch is the sync check AGENTS.md asks for: a tool that
+// exists on only one front-end is a tool an agent or a script will ask for and
+// not find. Registration happens in two places by design (a Cobra command and
+// an addTool call); this is what keeps them describing the same set.
+func TestCLIAndMCPSurfacesMatch(t *testing.T) {
+	clearPlayEnv(t)
+	api := newFakePlayAPI(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, `{}`) })
+	t.Setenv("PLAY_API_BASE_URL", api.URL)
+	t.Setenv("PLAY_PACKAGE_NAME", "com.example.app")
+	original := configPath
+	configPath = writeConfig(t, "")
+	t.Cleanup(func() { configPath = original })
+
+	names := listTools(t, func(ctx context.Context, server *mcp.Server) error {
+		return registerPlatformsOn(ctx, server, []*Platform{playPlatform})
+	})
+
+	registered := map[string]bool{}
+	for _, name := range names {
+		if !strings.HasPrefix(name, playPlatformName+"_") {
+			t.Errorf("tool %q is not namespaced — the registrar applies the prefix", name)
+			continue
+		}
+		registered[strings.TrimPrefix(name, playPlatformName+"_")] = true
+	}
+
+	// CLI subcommands are kebab-case (`rollout play halt-release`); MCP tools
+	// are snake_case (`play_halt_release`). The mapping is mechanical, and
+	// docs/name-map.md documents it.
+	cliNames := map[string]bool{}
+	for _, cmd := range playPlatform.Commands {
+		cliNames[mcpToolName(cmd.Name())] = true
+	}
+
+	for name := range cliNames {
+		if !registered[name] {
+			t.Errorf("`rollout play %s` has no MCP registration — add it to registerPlayTools", name)
+		}
+	}
+	for name := range registered {
+		if !cliNames[name] {
+			t.Errorf("MCP tool %s_%s has no CLI subcommand — add it to playPlatform.Commands", playPlatformName, name)
+		}
+	}
+}
+
+func TestMCPToolName(t *testing.T) {
+	tests := []struct{ cli, tool string }{
+		{"tracks", "tracks"},
+		{"halt-release", "halt_release"},
+		{"upload-artifact", "upload_artifact"},
+	}
+	for _, tc := range tests {
+		if got := mcpToolName(tc.cli); got != tc.tool {
+			t.Errorf("mcpToolName(%q) = %q, want %q", tc.cli, got, tc.tool)
+		}
+	}
+}
+
+// TestUnconfiguredPlayIsSkipped exercises the real platform: an MCP host with
+// no Play credentials must still start, with the reason in its server log.
+func TestUnconfiguredPlayIsSkipped(t *testing.T) {
+	clearPlayEnv(t)
+	original := configPath
+	configPath = writeConfig(t, "")
+	t.Cleanup(func() { configPath = original })
+	captureWarnings(t)
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "rollout", Version: "test"}, nil)
+	err := registerPlatformsOn(context.Background(), server, []*Platform{playPlatform})
+	if err == nil {
+		t.Fatal("expected an error when the only platform cannot be served")
+	}
+	if !strings.Contains(err.Error(), "rollout doctor") {
+		t.Errorf("error should point at the fix: %v", err)
 	}
 }

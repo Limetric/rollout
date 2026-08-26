@@ -28,7 +28,8 @@ var playPlatform = registerPlatform(&Platform{
 	Login:          playLoginCmd,
 	ConfigCommands: []*cobra.Command{playSetPackageCmd, playSetDeveloperIDCmd},
 
-	ShowConfig: playShowConfig,
-	Doctor:     playDoctor,
-	Configured: playConfigured,
+	RegisterMCP: registerPlayTools,
+	ShowConfig:  playShowConfig,
+	Doctor:      playDoctor,
+	Configured:  playConfigured,
 })

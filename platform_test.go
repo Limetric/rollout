@@ -73,6 +73,9 @@ func TestPlatformDefinitions(t *testing.T) {
 			if p.Title == "" || p.Short == "" {
 				t.Error("platform needs a Title and a Short description for help text")
 			}
+			if p.RegisterMCP == nil {
+				t.Error("platform registers no MCP tools")
+			}
 			if p.Doctor == nil {
 				t.Error("platform has no doctor check")
 			}

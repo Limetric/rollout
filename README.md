@@ -39,6 +39,31 @@ Or sign in with your own Play Console account:
 rollout login play
 ```
 
+## MCP hosts
+
+Point your host at the binary and pass credentials through the environment — no
+config file needed:
+
+```json
+{
+  "mcpServers": {
+    "rollout": {
+      "command": "rollout",
+      "args": ["mcp"],
+      "env": {
+        "PLAY_SERVICE_ACCOUNT_FILE": "/path/to/key.json",
+        "PLAY_PACKAGE_NAME": "com.example.app"
+      }
+    }
+  }
+}
+```
+
+Tools appear namespaced: `play_tracks`, `play_releases`, `play_reviews`. A
+platform whose credentials do not resolve is skipped with a note in the server
+log rather than taking the whole server down, so an unconfigured second store
+never blocks the first.
+
 ## Namespaces
 
 Google Play is `rollout play …` on the CLI and `play_…` over MCP. Shared
