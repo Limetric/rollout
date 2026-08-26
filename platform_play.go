@@ -25,6 +25,7 @@ var playPlatform = registerPlatform(&Platform{
 	// is exposed both ways, backed by the same handler.
 	Commands: []*cobra.Command{},
 
+	Login:          playLoginCmd,
 	ConfigCommands: []*cobra.Command{playSetPackageCmd, playSetDeveloperIDCmd},
 
 	ShowConfig: playShowConfig,

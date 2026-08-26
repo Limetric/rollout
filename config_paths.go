@@ -118,6 +118,35 @@ func resolveWritePath(path string) string {
 	return path
 }
 
+// snapshotFile captures a file's contents and returns a function that puts them
+// back — deleting the file if it did not exist. It lets a save that spans two
+// files undo its first write when the second fails, so a credential pair whose
+// halves are useless apart is never left half-applied.
+func snapshotFile(path string) (restore func() error, err error) {
+	// Snapshot what a write would actually change, resolving the path the same
+	// way writeFileAtomic does. Through a symlink staged before its target
+	// exists, the two disagree otherwise: the write creates the target while the
+	// undo deletes the link, destroying it and keeping the change.
+	path = resolveWritePath(path)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return func() error {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return nil
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	perm := os.FileMode(0o600)
+	if fi, err := os.Stat(path); err == nil {
+		perm = fi.Mode().Perm()
+	}
+	return func() error { return writeFileAtomic(path, data, perm) }, nil
+}
+
 func userConfigDir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {

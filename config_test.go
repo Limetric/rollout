@@ -18,9 +18,14 @@ func writeConfig(t *testing.T, contents string) string {
 }
 
 // clearPlayEnv unsets everything that could leak the developer's real setup
-// into a test.
+// into a test, and points the config and token store at a temp directory so
+// nothing reads — or probes — the real ones.
 func clearPlayEnv(t *testing.T) {
 	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv(tokenStoreEnv, filepath.Join(dir, "tokens"))
 	for _, key := range []string{
 		"PLAY_SERVICE_ACCOUNT_FILE", "PLAY_SERVICE_ACCOUNT_JSON", "PLAY_CLIENT_ID",
 		"PLAY_CLIENT_SECRET", "PLAY_PACKAGE_NAME", "PLAY_DEVELOPER_ID",
@@ -83,10 +88,6 @@ service_account_file = "/keys/from-file.json"
 
 func TestMissingConfigFileIsEnvOnly(t *testing.T) {
 	clearPlayEnv(t)
-	// Point HOME at an empty dir so no real config is found.
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("PLAY_PACKAGE_NAME", "com.example.app")
 
 	cfg, err := loadPlayConfig("")
@@ -340,9 +341,6 @@ func TestPlayConfiguredDetectsPartialSetup(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			clearPlayEnv(t)
-			dir := t.TempDir()
-			t.Setenv("HOME", dir)
-			t.Setenv("XDG_CONFIG_HOME", dir)
 			for k, v := range tc.env {
 				t.Setenv(k, v)
 			}

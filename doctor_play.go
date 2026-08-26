@@ -16,8 +16,11 @@ func playDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult, e
 	if err != nil {
 		return liveUnconfigured, err
 	}
+	store := describeTokenStore(playTokenPolicy.Platform)
 	fmt.Fprintf(out, "credential mode:    %s\n", playCredentialModeSummary(cfg))
 	fmt.Fprintf(out, "service account:    %s\n", playServiceAccountSummary(cfg))
+	fmt.Fprintf(out, "token store:        %s\n", store.location())
+	fmt.Fprintf(out, "saved sign-in:      %s\n", store.describe(playTokenPolicy))
 	fmt.Fprintf(out, "package name:       %s\n", orNone(cfg.PackageName))
 	fmt.Fprintf(out, "developer id:       %s\n", orNone(cfg.DeveloperID))
 	fmt.Fprintf(out, "reports bucket:     %s\n", orNone(cfg.ReportsBucket))
@@ -28,12 +31,20 @@ func playDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult, e
 	if err := cfg.validate(); err != nil {
 		return liveUnconfigured, err
 	}
-	// A service-account key that does not parse cannot mint a token, so the
-	// live probe below would report it as an unreachable API rather than as
-	// the file problem it is.
-	if cfg.credentialMode() == credentialServiceAccount {
+	// A credential that cannot even be assembled would surface below as an
+	// unreachable API rather than as the file — or missing sign-in — problem it
+	// is, so it is checked here, offline, where the message can name the fix.
+	switch cfg.credentialMode() {
+	case credentialServiceAccount:
 		if _, err := cfg.readServiceAccountKey(); err != nil {
 			return liveUnconfigured, err
+		}
+	case credentialOAuthUser:
+		if store.ReadErr != nil {
+			return liveUnconfigured, store.ReadErr
+		}
+		if store.Token == nil {
+			return liveUnconfigured, fmt.Errorf("an OAuth client is configured but nobody has signed in — run `%s`", playTokenPolicy.loginCommand())
 		}
 	}
 	if offline {

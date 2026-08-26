@@ -33,10 +33,14 @@ func tokenSource(ctx context.Context, cfg *PlayConfig) (oauth2.TokenSource, erro
 			Expiry:      time.Now().Add(time.Hour),
 		}), nil
 	}
-	if cfg.credentialMode() == credentialServiceAccount {
+	switch cfg.credentialMode() {
+	case credentialServiceAccount:
 		return serviceAccountTokenSource(ctx, cfg)
+	case credentialOAuthUser:
+		return userTokenSource(ctx, cfg)
+	default:
+		return nil, fmt.Errorf("no Google Play credentials — set PLAY_SERVICE_ACCOUNT_FILE to a service-account key granted access in Play Console → Users & permissions, or run `rollout login play`")
 	}
-	return nil, fmt.Errorf("no usable Google Play credentials — set PLAY_SERVICE_ACCOUNT_FILE to a service-account key granted access in Play Console → Users & permissions, or run `rollout login play`")
 }
 
 // serviceAccountTokenSource mints access tokens from a service-account key by
@@ -68,3 +72,54 @@ func newPlayHTTPClient(ctx context.Context, cfg *PlayConfig) (*http.Client, erro
 	client.Timeout = 60 * time.Second
 	return client, nil
 }
+
+// userTokenSource mints access tokens from a refresh token saved by
+// `rollout login play`. The source is wrapped so a rotated refresh token is
+// written back to the store — Google's never rotates, but the write-back is
+// what keeps the store usable by the next platform rather than something it
+// has to rebuild.
+func userTokenSource(ctx context.Context, cfg *PlayConfig) (oauth2.TokenSource, error) {
+	stored, err := readStoredToken(playTokenPolicy.Platform)
+	if err != nil {
+		return nil, err
+	}
+	if stored == nil {
+		return nil, fmt.Errorf("an OAuth client is configured but nobody has signed in — run `%s`", playTokenPolicy.loginCommand())
+	}
+	checkClientBinding(playTokenPolicy, stored, cfg.ClientID)
+
+	conf := playOAuthConfig(cfg, 0)
+	base := conf.TokenSource(ctx, &oauth2.Token{RefreshToken: stored.RefreshToken})
+	return oauth2.ReuseTokenSource(nil, &persistingTokenSource{
+		policy:   playTokenPolicy,
+		src:      base,
+		clientID: cfg.ClientID,
+		current:  stored.RefreshToken,
+	}), nil
+}
+
+// playOAuthConfig builds the OAuth2 config for the user sign-in flow. port is
+// the loopback callback port; pass 0 when no redirect is needed (a refresh).
+func playOAuthConfig(cfg *PlayConfig, port int) *oauth2.Config {
+	conf := &oauth2.Config{
+		ClientID:     cfg.ClientID,
+		ClientSecret: cfg.ClientSecret,
+		Endpoint:     playOAuthEndpoint,
+		Scopes:       cfg.scopes(),
+	}
+	if port > 0 {
+		conf.RedirectURL = loopbackRedirectURL(port)
+	}
+	return conf
+}
+
+// playOAuthEndpoint is the production Google OAuth endpoint. It is a package
+// var so tests can point the login and refresh flows at a fake token server —
+// the only place Google's token endpoint is named.
+var playOAuthEndpoint = google.Endpoint
+
+// playTokenPolicy is Play's slice of the shared token store. Google's refresh
+// tokens are long-lived and static — a refresh returns a new access token and
+// the same refresh token — so an unwritable store costs nothing here and must
+// not break a setup that works today.
+var playTokenPolicy = tokenPolicy{Platform: playPlatformName, Rotates: false}

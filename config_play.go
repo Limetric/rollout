@@ -247,5 +247,12 @@ func playConfigured() bool {
 		// not one it should skip over.
 		return true
 	}
-	return cfg.credentialMode() != credentialNone || cfg.PackageName != "" || cfg.DeveloperID != ""
+	if cfg.credentialMode() != credentialNone || cfg.PackageName != "" || cfg.DeveloperID != "" {
+		return true
+	}
+	// A saved sign-in counts too: `rollout login play` leaves the refresh token
+	// in the store and the client in the config, but a user who then moved
+	// their config file still has a setup doctor should report on.
+	tok, err := readStoredToken(playTokenPolicy.Platform)
+	return err == nil && tok != nil
 }

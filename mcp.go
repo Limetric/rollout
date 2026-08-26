@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
-	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -108,17 +106,4 @@ func addTool[C, A, R any](reg *toolRegistrar, client C, name, desc string, handl
 // toolError is a small helper for handlers to produce consistent messages.
 func toolError(tool string, err error) error {
 	return fmt.Errorf("%s: %w", tool, err)
-}
-
-// warnedMessages keeps stderr diagnostics from repeating. An MCP session is
-// long-lived and a host collects everything the server writes to stderr; the
-// same setup warning printed on every tool call turns a useful hint into noise.
-var warnedMessages sync.Map
-
-func warnOnce(format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	if _, loaded := warnedMessages.LoadOrStore(msg, true); loaded {
-		return
-	}
-	fmt.Fprintln(os.Stderr, "warning:", msg)
 }
