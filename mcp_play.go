@@ -72,5 +72,47 @@ func registerPlayTools(ctx context.Context, reg *toolRegistrar) error {
 		"Check whether these credentials can actually publish to this app, by opening and immediately discarding an edit. Call this before staging a write: a credential that authenticates fine can still lack access to a given app.",
 		runEditStatus)
 
+	// --- release management writes ---
+
+	addTool(reg, client, "upload_artifact",
+		"Upload an .aab or .apk and add it to a track. Previews first and returns a confirm token; nothing is uploaded until you call again with it. Defaults to the internal track as a draft release, so uploading a build and shipping it stay separate decisions.",
+		runUploadArtifact)
+
+	addTool(reg, client, "create_release",
+		"Create a track release from version codes that are already uploaded (see play_artifacts). Previews first and returns a confirm token. Other releases in the track — including an in-progress rollout — are left untouched.",
+		runCreateRelease)
+
+	addTool(reg, client, "update_release",
+		"Change one release: this is the staged-rollout dial (rollout 0.1 → 0.25 → 0.5), and also how release notes, name, and in-app update priority are changed. Previews first and returns a confirm token.",
+		runUpdateRelease)
+
+	addTool(reg, client, "halt_release",
+		"Halt a staged rollout, stopping delivery to users who do not already have it. Destructive: takes two confirmations, and resuming later does not undo the time it was gone.",
+		runHaltRelease)
+
+	addTool(reg, client, "resume_release",
+		"Resume a halted rollout, optionally at a different fraction. Previews first and returns a confirm token.",
+		runResumeRelease)
+
+	addTool(reg, client, "complete_release",
+		"Roll a release out to every user. On the production track this takes two confirmations: there is no lower fraction to fall back to.",
+		runCompleteRelease)
+
+	addTool(reg, client, "promote_release",
+		"Promote a release from one track to another, carrying its release notes, name, and update priority across. Defaults to a draft on production and completed elsewhere. Previews first and returns a confirm token.",
+		runPromoteRelease)
+
+	addTool(reg, client, "set_testers",
+		"Replace the Google Groups that may test a track. The Play API takes group addresses only — individual tester emails exist solely in the Console. The preview diffs the current list against the new one, because this call replaces rather than adds.",
+		runSetTesters)
+
+	addTool(reg, client, "set_countries",
+		"Set the countries a track's release ships to. Play scopes availability per release, so this patches the release's country targeting. Previews first and returns a confirm token.",
+		runSetCountries)
+
+	addTool(reg, client, "upload_deobfuscation",
+		"Attach a ProGuard/R8 mapping file or native debug symbols to an uploaded version code, so crash stack traces in Android vitals are readable. Previews first and returns a confirm token.",
+		runUploadDeobfuscation)
+
 	return nil
 }

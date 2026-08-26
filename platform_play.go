@@ -38,6 +38,12 @@ var playPlatform = registerPlatform(&Platform{
 		countriesCmd,
 		deviceTiersCmd,
 		editCmd,
+
+		// Release management writes.
+		uploadCmd,
+		releaseCmd,
+		promoteCmd,
+		deobfuscationCmd,
 	},
 
 	Login:          playLoginCmd,

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/spf13/cobra"
 )
@@ -41,6 +42,28 @@ func runPlayRead[A, R any](cmd *cobra.Command, args A, format string, handler fu
 	return printResult(cmd.OutOrStdout(), format, res)
 }
 
+// runPlayWrite builds the client, runs a write handler, and prints the result.
+// Writes always print JSON: the interesting output is a preview and a confirm
+// token, not a table.
+func runPlayWrite[A any](cmd *cobra.Command, args A, handler func(context.Context, *Client, A) (WriteResult, error)) error {
+	client, err := newPlayClient(cmd.Context())
+	if err != nil {
+		return err
+	}
+	res, err := handler(cmd.Context(), client, args)
+	if err != nil {
+		return err
+	}
+	if err := printJSON(cmd.OutOrStdout(), res); err != nil {
+		return err
+	}
+	// The next step goes to stderr so stdout stays valid JSON for jq pipelines.
+	if !res.Applied && res.ConfirmToken != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "\n%s", res.Preview)
+	}
+	return nil
+}
+
 // addPackageFlag registers the --package flag every Play tool accepts.
 func addPackageFlag(cmd *cobra.Command, dst *string) {
 	cmd.Flags().StringVar(dst, "package", "", "Android package name (falls back to the configured default)")
@@ -64,4 +87,9 @@ func jsonRows[T any](values []T) []json.RawMessage {
 		rows = append(rows, jsonRow(v))
 	}
 	return rows
+}
+
+// addConfirmFlag registers the --confirm flag every Play write tool accepts.
+func addConfirmFlag(cmd *cobra.Command, dst *string) {
+	cmd.Flags().StringVar(dst, "confirm", "", "confirm token from a previous preview")
 }

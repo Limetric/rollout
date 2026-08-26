@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -30,6 +34,13 @@ const (
 	// transaction, so wrapping one in an edit would open and commit an empty
 	// edit for no reason.
 	dispatchDirect = "direct"
+	// dispatchUpload uploads an artifact and, unless asked not to, adds it to a
+	// track — both inside one edit, because an artifact uploaded into an edit
+	// that is never committed does not exist.
+	dispatchUpload = "upload"
+	// dispatchDeobfuscation uploads a mapping or native-symbol file against an
+	// already-uploaded version code.
+	dispatchDeobfuscation = "deobfuscation"
 )
 
 // editRequest is one REST call inside an edit, addressed relative to the edit
@@ -60,15 +71,61 @@ type editPayload struct {
 // holds several releases at once — a completed one, an in-progress staged
 // rollout, a draft — and writing the whole array is how in-progress rollouts
 // get silently dropped.
+//
+// There are two modes. A create or a promotion supplies a complete Release,
+// which replaces the one carrying the same version codes or is appended. An
+// update supplies a Patch instead: the fields to change, merged into whatever
+// the release looks like *at apply time*. That matters because a staged token
+// may be confirmed minutes later — turning the rollout dial should change the
+// fraction, not quietly revert release notes somebody edited in between.
 type trackPayload struct {
 	Track string `json:"track"`
-	// Release is the release to insert or replace, as the API's Track.Release
-	// shape. It is matched against the existing releases by version code.
-	Release json.RawMessage `json:"release"`
+	// Release is the complete release to insert or replace, as the API's
+	// Track.Release shape. It is matched against the existing releases by
+	// version code.
+	Release json.RawMessage `json:"release,omitempty"`
+	// MatchVersionCodes names the release a Patch applies to. Empty means the
+	// track's only release, which is what makes `--rollout 0.5` work without
+	// the caller having to look up a version code first.
+	MatchVersionCodes []string `json:"match_version_codes,omitempty"`
+	// Patch holds the fields to merge into the matched release.
+	Patch json.RawMessage `json:"patch,omitempty"`
+	// PatchRemove names fields to clear. Completing a release means removing
+	// userFraction, not setting it to 1: the API rejects `completed` carrying
+	// a fraction.
+	PatchRemove []string `json:"patch_remove,omitempty"`
 	// RemoveOtherDrafts drops draft releases that the new one supersedes.
 	// Completed and in-progress releases are never removed by this.
 	RemoveOtherDrafts       bool `json:"remove_other_drafts,omitempty"`
 	ChangesNotSentForReview bool `json:"changes_not_sent_for_review,omitempty"`
+}
+
+// uploadPayload is the staged intent for an artifact upload.
+type uploadPayload struct {
+	FilePath    string `json:"file_path"`
+	ContentType string `json:"content_type"`
+	// SHA256 is the hash the preview was built from. The apply refuses when the
+	// file has changed since: a token confirmed after a rebuild would otherwise
+	// upload something nobody previewed.
+	SHA256 string `json:"sha256"`
+	// Kind is "bundle" or "apk"; they have different endpoints.
+	Kind  string `json:"kind"`
+	Track string `json:"track,omitempty"`
+	// Release is the release to add the uploaded artifact to, without its
+	// version codes — those are only known once the upload returns.
+	Release                 *trackRelease `json:"release,omitempty"`
+	RemoveOtherDrafts       bool          `json:"remove_other_drafts,omitempty"`
+	ChangesNotSentForReview bool          `json:"changes_not_sent_for_review,omitempty"`
+}
+
+// deobfuscationPayload is the staged intent for a mapping or symbol upload.
+type deobfuscationPayload struct {
+	FilePath    string `json:"file_path"`
+	SHA256      string `json:"sha256"`
+	VersionCode string `json:"version_code"`
+	// Type is "proguard" or "nativeCode".
+	Type                    string `json:"type"`
+	ChangesNotSentForReview bool   `json:"changes_not_sent_for_review,omitempty"`
 }
 
 // track is the API's Track resource.
@@ -132,6 +189,10 @@ func (c *Client) applyMutation(ctx context.Context, p *PendingMutation) (*applyO
 		return c.applyDirectWrite(ctx, p)
 	case dispatchEdit:
 		return c.applyEditWrite(ctx, p)
+	case dispatchUpload:
+		return c.applyUpload(ctx, p)
+	case dispatchDeobfuscation:
+		return c.applyDeobfuscationUpload(ctx, p)
 	default:
 		return nil, fmt.Errorf("staged write %q has an unknown dispatch %q — this token was written by a different version of rollout; re-run the original command", p.Tool, p.Dispatch)
 	}
@@ -200,26 +261,25 @@ func (e *editSession) run(ctx context.Context, req editRequest, out *json.RawMes
 // rollout, a draft — and the API's tracks.update replaces the entire releases[]
 // array. Writing the array a tool assembled from its own arguments is how an
 // in-progress rollout silently disappears. So the track is read *inside the
-// edit*, the one release with a matching version code is replaced, and
-// everything else is written back exactly as it came.
+// edit*, one release is changed, and everything else is written back exactly as
+// it came.
 func (c *Client) applyTrackWrite(ctx context.Context, p *PendingMutation) (*applyOutcome, error) {
 	var payload trackPayload
 	if err := json.Unmarshal(p.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("corrupt staged payload for %s: %w", p.Tool, err)
 	}
-	if payload.Track == "" || len(payload.Release) == 0 {
-		return nil, fmt.Errorf("staged write %s names no track or release", p.Tool)
+	if payload.Track == "" {
+		return nil, fmt.Errorf("staged write %s names no track", p.Tool)
+	}
+	if len(payload.Release) == 0 && len(payload.Patch) == 0 {
+		return nil, fmt.Errorf("staged write %s changes nothing", p.Tool)
 	}
 
 	var result json.RawMessage
 	editID, err := c.withEdit(ctx, p.PackageName, true,
 		commitOptions{ChangesNotSentForReview: payload.ChangesNotSentForReview},
 		func(e *editSession) error {
-			var current track
-			if err := e.c.do(ctx, http.MethodGet, e.path("tracks/"+payload.Track), nil, nil, &current); err != nil {
-				return fmt.Errorf("read track %s: %w", payload.Track, err)
-			}
-			merged, err := mergeRelease(current.Releases, payload.Release, payload.RemoveOtherDrafts)
+			merged, err := e.mergeTrack(ctx, payload)
 			if err != nil {
 				return err
 			}
@@ -230,6 +290,84 @@ func (c *Client) applyTrackWrite(ctx context.Context, p *PendingMutation) (*appl
 		return &applyOutcome{EditID: editID}, err
 	}
 	return &applyOutcome{EditID: editID, Detail: p.Summary, Results: []json.RawMessage{result}}, nil
+}
+
+// mergeTrack reads the track inside the edit and produces the releases array to
+// write back.
+func (e *editSession) mergeTrack(ctx context.Context, payload trackPayload) ([]json.RawMessage, error) {
+	var current track
+	if err := e.c.do(ctx, http.MethodGet, e.path("tracks/"+payload.Track), nil, nil, &current); err != nil {
+		return nil, fmt.Errorf("read track %s: %w", payload.Track, err)
+	}
+	if len(payload.Patch) > 0 {
+		return patchRelease(current.Releases, payload.MatchVersionCodes, payload.Patch, payload.PatchRemove)
+	}
+	return mergeRelease(current.Releases, payload.Release, payload.RemoveOtherDrafts)
+}
+
+// patchRelease merges a partial update into the one matching release, leaving
+// every other release in the track untouched.
+func patchRelease(existing []json.RawMessage, match []string, patch json.RawMessage, remove []string) ([]json.RawMessage, error) {
+	index, err := findRelease(existing, match)
+	if err != nil {
+		return nil, err
+	}
+
+	merged, err := mergeJSONObject(existing[index], patch, remove)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]json.RawMessage, len(existing))
+	copy(out, existing)
+	out[index] = merged
+	return out, nil
+}
+
+// findRelease locates the release a patch applies to. With no version codes it
+// requires the track to hold exactly one release — guessing which of several to
+// change would be the worst possible default for a publishing tool.
+func findRelease(existing []json.RawMessage, match []string) (int, error) {
+	if len(match) == 0 {
+		switch len(existing) {
+		case 0:
+			return 0, fmt.Errorf("the track has no releases to update")
+		case 1:
+			return 0, nil
+		default:
+			return 0, fmt.Errorf("the track holds %d releases — name the one to change with --version-codes (see `rollout play tracks`)", len(existing))
+		}
+	}
+	for i, raw := range existing {
+		codes, err := releaseVersionCodes(raw)
+		if err != nil {
+			continue
+		}
+		if sameVersionCodes(codes, match) {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("no release with version code %s is in this track — it may already have been superseded (see `rollout play tracks`)", strings.Join(match, "+"))
+}
+
+// mergeJSONObject applies a patch object over a base object and clears the
+// named fields. It works on decoded maps rather than typed structs so a field
+// this binary has never heard of survives a patch untouched.
+func mergeJSONObject(base, patch json.RawMessage, remove []string) (json.RawMessage, error) {
+	merged := map[string]any{}
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, fmt.Errorf("the release being updated is not an object: %w", err)
+	}
+	fields := map[string]any{}
+	if err := json.Unmarshal(patch, &fields); err != nil {
+		return nil, fmt.Errorf("the staged update is not an object: %w", err)
+	}
+	for k, v := range fields {
+		merged[k] = v
+	}
+	for _, k := range remove {
+		delete(merged, k)
+	}
+	return json.Marshal(merged)
 }
 
 // mergeRelease replaces the release carrying the same version codes and keeps
@@ -339,4 +477,137 @@ func (c *Client) applyDirectWrite(ctx context.Context, p *PendingMutation) (*app
 		}
 	}
 	return &applyOutcome{Detail: p.Summary, Results: results}, nil
+}
+
+// applyUpload uploads an artifact and, unless the write asked for upload-only,
+// adds it to a track — all inside one edit.
+//
+// The two steps cannot be split. An artifact uploaded into an edit that is
+// never committed does not exist, so an upload followed by a separate release
+// write would either commit a bare artifact or lose it entirely.
+func (c *Client) applyUpload(ctx context.Context, p *PendingMutation) (*applyOutcome, error) {
+	var payload uploadPayload
+	if err := json.Unmarshal(p.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("corrupt staged payload for %s: %w", p.Tool, err)
+	}
+	if err := verifyStagedFile(payload.FilePath, payload.SHA256); err != nil {
+		return nil, err
+	}
+
+	endpoint := "bundles"
+	if payload.Kind == "apk" {
+		endpoint = "apks"
+	}
+
+	var uploaded struct {
+		VersionCode int64  `json:"versionCode"`
+		SHA256      string `json:"sha256"`
+		Binary      struct {
+			SHA256 string `json:"sha256"`
+		} `json:"binary"`
+	}
+	var trackResult json.RawMessage
+
+	editID, err := c.withEdit(ctx, p.PackageName, true,
+		commitOptions{ChangesNotSentForReview: payload.ChangesNotSentForReview},
+		func(e *editSession) error {
+			if err := c.uploadMedia(ctx, e.path(endpoint), payload.ContentType, payload.FilePath, nil, &uploaded, nil); err != nil {
+				return fmt.Errorf("upload %s: %w", payload.FilePath, err)
+			}
+			if uploaded.VersionCode == 0 {
+				return fmt.Errorf("upload %s: the API returned no version code", payload.FilePath)
+			}
+			if payload.Release == nil || payload.Track == "" {
+				return nil
+			}
+
+			release := *payload.Release
+			release.VersionCodes = []string{fmt.Sprint(uploaded.VersionCode)}
+			raw, err := json.Marshal(release)
+			if err != nil {
+				return err
+			}
+			merged, err := e.mergeTrack(ctx, trackPayload{
+				Track: payload.Track, Release: raw, RemoveOtherDrafts: payload.RemoveOtherDrafts,
+			})
+			if err != nil {
+				return err
+			}
+			body := track{Track: payload.Track, Releases: merged}
+			return e.c.doWrite(ctx, http.MethodPut, e.path("tracks/"+payload.Track), nil, body, &trackResult)
+		})
+	if err != nil {
+		return &applyOutcome{EditID: editID}, err
+	}
+
+	detail := fmt.Sprintf("%s uploaded as version code %d", payload.FilePath, uploaded.VersionCode)
+	if payload.Track != "" && payload.Release != nil {
+		detail += fmt.Sprintf(" and added to %s", payload.Track)
+	}
+	results := []json.RawMessage{jsonRow(map[string]any{"versionCode": uploaded.VersionCode, "sha256": uploaded.SHA256})}
+	if len(trackResult) > 0 {
+		results = append(results, trackResult)
+	}
+	return &applyOutcome{EditID: editID, Detail: detail, Results: results}, nil
+}
+
+// applyDeobfuscationUpload attaches a mapping or native-symbol file to an
+// already-uploaded version code.
+func (c *Client) applyDeobfuscationUpload(ctx context.Context, p *PendingMutation) (*applyOutcome, error) {
+	var payload deobfuscationPayload
+	if err := json.Unmarshal(p.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("corrupt staged payload for %s: %w", p.Tool, err)
+	}
+	if err := verifyStagedFile(payload.FilePath, payload.SHA256); err != nil {
+		return nil, err
+	}
+
+	var uploaded json.RawMessage
+	editID, err := c.withEdit(ctx, p.PackageName, true,
+		commitOptions{ChangesNotSentForReview: payload.ChangesNotSentForReview},
+		func(e *editSession) error {
+			path := e.path(fmt.Sprintf("apks/%s/deobfuscationFiles/%s", payload.VersionCode, payload.Type))
+			return c.uploadMedia(ctx, path, "application/octet-stream", payload.FilePath, nil, &uploaded, nil)
+		})
+	if err != nil {
+		return &applyOutcome{EditID: editID}, err
+	}
+	return &applyOutcome{EditID: editID, Detail: p.Summary, Results: []json.RawMessage{uploaded}}, nil
+}
+
+// verifyStagedFile refuses to upload a file that changed after it was
+// previewed.
+//
+// A confirm token outlives the command that produced it, and the obvious way to
+// spend that window is another build. Uploading whatever is at the path now
+// would ship an artifact nobody looked at — and the hash was already in the
+// preview, so this costs one read to close.
+func verifyStagedFile(path, want string) error {
+	if want == "" {
+		return nil
+	}
+	got, err := fileSHA256(path)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("%s has changed since it was previewed (sha256 %s, previewed %s) — re-run the command to preview the current file", path, got, want)
+	}
+	return nil
+}
+
+// fileSHA256 hashes a file. Play reports the same digest back on upload, so it
+// is both the preview's identity for the artifact and the check that the file
+// did not move under us.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open %q: %w", path, err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("read %q: %w", path, err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
