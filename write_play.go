@@ -41,6 +41,14 @@ const (
 	// dispatchDeobfuscation uploads a mapping or native-symbol file against an
 	// already-uploaded version code.
 	dispatchDeobfuscation = "deobfuscation"
+	// dispatchImages uploads store listing images, which cannot go through
+	// dispatchEdit because an image upload is a resumable transfer rather than
+	// a JSON body.
+	dispatchImages = "images"
+	// dispatchListingSync applies a whole reconciliation plan — text, uploads,
+	// and deletions across every locale — inside one edit, so a failure on any
+	// locale commits nothing.
+	dispatchListingSync = "listing_sync"
 )
 
 // editRequest is one REST call inside an edit, addressed relative to the edit
@@ -147,6 +155,8 @@ type stagePlayWriteRequest struct {
 	// RequiresDouble forces a second confirmation for a write the guard rails
 	// would not catch by name.
 	RequiresDouble bool
+	// ScopedDelete narrows a deletion to one item the caller named by id.
+	ScopedDelete bool
 }
 
 // previewPlayWrite stages a Play write and returns its preview. Every Play
@@ -167,6 +177,7 @@ func previewPlayWrite(req stagePlayWriteRequest) (WriteResult, error) {
 		Track:           req.Track,
 		RolloutFraction: req.RolloutFraction,
 		RequiresDouble:  req.RequiresDouble,
+		ScopedDelete:    req.ScopedDelete,
 	})
 	if err != nil {
 		return WriteResult{}, err
@@ -193,6 +204,10 @@ func (c *Client) applyMutation(ctx context.Context, p *PendingMutation) (*applyO
 		return c.applyUpload(ctx, p)
 	case dispatchDeobfuscation:
 		return c.applyDeobfuscationUpload(ctx, p)
+	case dispatchImages:
+		return c.applyImageUploads(ctx, p)
+	case dispatchListingSync:
+		return c.applyListingSync(ctx, p)
 	default:
 		return nil, fmt.Errorf("staged write %q has an unknown dispatch %q — this token was written by a different version of rollout; re-run the original command", p.Tool, p.Dispatch)
 	}
@@ -610,4 +625,124 @@ func fileSHA256(path string) (string, error) {
 		return "", fmt.Errorf("read %q: %w", path, err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// imagesPayload is the staged intent for an image upload.
+type imagesPayload struct {
+	Locale                  string        `json:"locale"`
+	Uploads                 []imageUpload `json:"uploads"`
+	ChangesNotSentForReview bool          `json:"changes_not_sent_for_review,omitempty"`
+}
+
+// applyImageUploads uploads store listing images inside one edit.
+func (c *Client) applyImageUploads(ctx context.Context, p *PendingMutation) (*applyOutcome, error) {
+	var payload imagesPayload
+	if err := json.Unmarshal(p.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("corrupt staged payload for %s: %w", p.Tool, err)
+	}
+	if len(payload.Uploads) == 0 {
+		return nil, fmt.Errorf("staged write %s has no images to upload", p.Tool)
+	}
+
+	var results []json.RawMessage
+	editID, err := c.withEdit(ctx, p.PackageName, true,
+		commitOptions{ChangesNotSentForReview: payload.ChangesNotSentForReview},
+		func(e *editSession) error {
+			return e.uploadImages(ctx, payload.Locale, payload.Uploads, &results)
+		})
+	if err != nil {
+		return &applyOutcome{EditID: editID}, err
+	}
+	return &applyOutcome{EditID: editID, Detail: p.Summary, Results: results}, nil
+}
+
+// uploadImages sends each image inside an already-open edit, refusing any file
+// that changed since the preview hashed it.
+func (e *editSession) uploadImages(ctx context.Context, locale string, uploads []imageUpload, results *[]json.RawMessage) error {
+	for _, upload := range uploads {
+		if err := verifyStagedFile(upload.Path, upload.SHA256); err != nil {
+			return err
+		}
+		contentType, err := contentTypeForArtifact(upload.Path)
+		if err != nil {
+			return err
+		}
+		var out json.RawMessage
+		path := e.path("listings/" + locale + "/" + upload.Type)
+		if err := e.c.uploadMedia(ctx, path, contentType, upload.Path, nil, &out, nil); err != nil {
+			return fmt.Errorf("upload %s as %s for %s: %w", upload.Path, upload.Type, locale, err)
+		}
+		if results != nil && len(out) > 0 {
+			*results = append(*results, out)
+		}
+	}
+	return nil
+}
+
+// listingSyncPayload is the whole reconciliation plan, embedded so
+// `rollout confirm` can apply it from another process without re-reading the
+// directory — and so a file that changed since the preview is refused rather
+// than silently published.
+type listingSyncPayload struct {
+	Plans                   []localeSyncPlan `json:"plans"`
+	ChangesNotSentForReview bool             `json:"changes_not_sent_for_review,omitempty"`
+}
+
+// applyListingSync applies a reconciliation plan across every locale in one
+// edit.
+//
+// Partial success is not success. A sync that updates six locales and fails on
+// the seventh has left the store inconsistent in a way nobody asked for, so the
+// whole plan runs inside a single edit: any failure aborts it, nothing commits,
+// and the error names the locale.
+func (c *Client) applyListingSync(ctx context.Context, p *PendingMutation) (*applyOutcome, error) {
+	var payload listingSyncPayload
+	if err := json.Unmarshal(p.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("corrupt staged payload for %s: %w", p.Tool, err)
+	}
+	if len(payload.Plans) == 0 {
+		return nil, fmt.Errorf("staged write %s has nothing to sync", p.Tool)
+	}
+
+	var results []json.RawMessage
+	editID, err := c.withEdit(ctx, p.PackageName, true,
+		commitOptions{ChangesNotSentForReview: payload.ChangesNotSentForReview},
+		func(e *editSession) error {
+			for _, plan := range payload.Plans {
+				if err := e.applyLocalePlan(ctx, plan, &results); err != nil {
+					return fmt.Errorf("locale %s: %w", plan.Locale, err)
+				}
+			}
+			return nil
+		})
+	if err != nil {
+		return &applyOutcome{EditID: editID}, err
+	}
+	return &applyOutcome{EditID: editID, Detail: p.Summary, Results: results}, nil
+}
+
+// applyLocalePlan runs one locale's text write, deletions, and uploads.
+func (e *editSession) applyLocalePlan(ctx context.Context, plan localeSyncPlan, results *[]json.RawMessage) error {
+	if plan.Listing != nil {
+		body, err := json.Marshal(apiListing(*plan.Listing))
+		if err != nil {
+			return err
+		}
+		var out json.RawMessage
+		if err := e.c.doWrite(ctx, http.MethodPut, e.path("listings/"+plan.Locale), nil, json.RawMessage(body), &out); err != nil {
+			return err
+		}
+		if len(out) > 0 {
+			*results = append(*results, out)
+		}
+	}
+	// Deletions run before uploads: a type at its image limit cannot accept a
+	// replacement until the old one is gone.
+	for _, deletion := range plan.Deletes {
+		path := e.path("listings/" + plan.Locale + "/" + deletion.Type + "/" + deletion.ID)
+		if err := e.c.doWrite(ctx, http.MethodDelete, path, nil, nil, nil); err != nil {
+			return fmt.Errorf("delete %s image %s: %w", deletion.Type, deletion.ID, err)
+		}
+	}
+	return e.uploadImages(ctx, plan.Locale, plan.Uploads, results)
 }

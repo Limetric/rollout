@@ -53,9 +53,14 @@ type PendingMutation struct {
 	// staged-rollout fraction it would end up at. They are declared by the
 	// staging tool so guards.go can re-check the configuration in force *now*
 	// without decoding a platform-specific payload.
-	Track           string    `json:"track,omitempty"`
-	RolloutFraction *float64  `json:"rollout_fraction,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	Track           string   `json:"track,omitempty"`
+	RolloutFraction *float64 `json:"rollout_fraction,omitempty"`
+	// ScopedDelete marks a deletion the caller narrowed to one item they named
+	// by id. Deleting everything of a kind is the case where nobody can say
+	// afterwards what was there; deleting the one thing you asked for by id is
+	// not, so it does not take a second confirmation.
+	ScopedDelete bool      `json:"scoped_delete,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 	// RequiresDouble marks destructive operations that need a second
 	// confirmation. DoubleConfirmed is set once the first confirm has been
 	// consumed and the mutation re-staged under a fresh token.
@@ -85,6 +90,8 @@ type pendingWrite struct {
 	// at confirm time.
 	Track           string
 	RolloutFraction *float64
+	// ScopedDelete narrows a deletion to one named item; see PendingMutation.
+	ScopedDelete bool
 	// RequiresDouble forces a second confirmation for a write whose tool name
 	// does not already imply one.
 	RequiresDouble bool
@@ -120,6 +127,7 @@ func stageWrite(w pendingWrite) (*PendingMutation, error) {
 		Payload:         w.Payload,
 		Track:           w.Track,
 		RolloutFraction: w.RolloutFraction,
+		ScopedDelete:    w.ScopedDelete,
 		CreatedAt:       time.Now().UTC(),
 		RequiresDouble:  w.RequiresDouble || requiresDoubleConfirmation(w, safety),
 	}

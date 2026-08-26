@@ -323,3 +323,50 @@ func stagePlayWriteAllowingBlocks(t *testing.T, w pendingWrite) *PendingMutation
 	t.Setenv("PLAY_BLOCKED_OPS", blocked)
 	return p
 }
+
+// TestScopedDeleteNeedsOneConfirmation: the dangerous case is not "a delete
+// happened", it is that after deleting everything of a kind nobody can say what
+// was there. Deleting one item the caller named by id is not that.
+func TestScopedDeleteNeedsOneConfirmation(t *testing.T) {
+	wide := pendingWrite{Tool: "delete_images", PackageName: "com.example.app"}
+	if !requiresDoubleConfirmation(wide, SafetyConfig{}) {
+		t.Error("deleting every image of a type should take two confirmations")
+	}
+
+	scoped := pendingWrite{Tool: "delete_images", PackageName: "com.example.app", ScopedDelete: true}
+	if requiresDoubleConfirmation(scoped, SafetyConfig{}) {
+		t.Error("deleting one named image should take one confirmation")
+	}
+
+	// The default stays safe: a delete tool that says nothing gets two.
+	if !requiresDoubleConfirmation(pendingWrite{Tool: "delete_something_new"}, SafetyConfig{}) {
+		t.Error("an undeclared delete must default to two confirmations")
+	}
+}
+
+// TestScopedDeleteSurvivesStaging: the flag is re-evaluated at confirm time
+// from the staged record, so it has to persist.
+func TestScopedDeleteSurvivesStaging(t *testing.T) {
+	isolateState(t)
+	p := stagePlayWrite(t, pendingWrite{
+		Tool: "delete_images", PackageName: "com.example.app",
+		Summary: "delete one image", ScopedDelete: true,
+	})
+	if p.RequiresDouble {
+		t.Fatal("a scoped delete should stage as a single confirmation")
+	}
+
+	staged, err := peekMutation(p.Token)
+	if err != nil {
+		t.Fatalf("peekMutation: %v", err)
+	}
+	if !staged.ScopedDelete {
+		t.Fatal("the scoping was lost in staging")
+	}
+	if err := enforceGuards(staged, loadSafetyConfig()); err != nil {
+		t.Fatalf("enforceGuards: %v", err)
+	}
+	if staged.RequiresDouble {
+		t.Error("confirm-time re-evaluation escalated a scoped delete")
+	}
+}

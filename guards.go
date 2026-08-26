@@ -156,8 +156,11 @@ func requiresDoubleConfirmation(w pendingWrite, cfg SafetyConfig) bool {
 	// but it does not undo the hours the release was gone.
 	case strings.Contains(w.Tool, "halt"):
 		return true
-	// Deletions: a store listing or an image set the API cannot bring back.
-	case strings.Contains(w.Tool, "delete"):
+	// Deletions, unless the caller narrowed one to an item they named by id.
+	// The dangerous case is not "a delete happened", it is that after deleting
+	// everything of a kind nobody can say what was there — a store listing or a
+	// screenshot set the API cannot bring back, and often the only copy.
+	case strings.Contains(w.Tool, "delete") && !w.ScopedDelete:
 		return true
 	// Finishing a production rollout: every remaining user gets the release,
 	// and there is no lower fraction to fall back to.
@@ -215,5 +218,6 @@ func (p *PendingMutation) asPendingWrite() pendingWrite {
 		Dispatch:        p.Dispatch,
 		Track:           p.Track,
 		RolloutFraction: p.RolloutFraction,
+		ScopedDelete:    p.ScopedDelete,
 	}
 }

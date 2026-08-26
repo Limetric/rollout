@@ -114,5 +114,31 @@ func registerPlayTools(ctx context.Context, reg *toolRegistrar) error {
 		"Attach a ProGuard/R8 mapping file or native debug symbols to an uploaded version code, so crash stack traces in Android vitals are readable. Previews first and returns a confirm token.",
 		runUploadDeobfuscation)
 
+	// --- store listing writes ---
+
+	addTool(reg, client, "update_listing",
+		"Set store listing text for one locale — title (30 chars), short description (80), full description (4000), promo video. The preview diffs each field against what is live. Fields you do not pass are carried over, not blanked.",
+		runUpdateListing)
+
+	addTool(reg, client, "delete_listing",
+		"Delete a locale's store listing, or every localized listing. Destructive: takes two confirmations, and the API cannot bring the text back.",
+		runDeleteListing)
+
+	addTool(reg, client, "upload_images",
+		"Upload store listing images for one locale and type. The preview reports each file's real dimensions and warns where Play's constraints are not met (icon 512×512, feature graphic 1024×500, at most 8 screenshots per type).",
+		runUploadImages)
+
+	addTool(reg, client, "delete_images",
+		"Delete store listing images by id, or every image of one type in a locale. Deleting a whole type takes two confirmations.",
+		runDeleteImages)
+
+	addTool(reg, client, "update_details",
+		"Set app-level details: the default listing language and the developer contact website, email, and phone shown on the store page.",
+		runUpdateDetails)
+
+	addTool(reg, client, "sync_listing",
+		"Reconcile a local metadata directory (the fastlane supply layout) with the store: per-locale text and, with images enabled, screenshots and graphics compared by SHA-256 so unchanged files are never re-uploaded. The whole plan is previewed and then applied in one edit — if any locale fails, none of it lands.",
+		runSyncListing)
+
 	return nil
 }
