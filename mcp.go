@@ -107,11 +107,3 @@ func addTool[C, A, R any](reg *toolRegistrar, client C, name, desc string, handl
 func toolError(tool string, err error) error {
 	return fmt.Errorf("%s: %w", tool, err)
 }
-
-// mcpToolName converts a CLI subcommand name to its MCP tool name. The two
-// front-ends have different conventions — Cobra subcommands are kebab-case,
-// MCP tool names are snake_case — and the mapping is mechanical, so it is
-// spelled once here rather than in every registration site.
-func mcpToolName(cliName string) string {
-	return strings.ReplaceAll(cliName, "-", "_")
-}

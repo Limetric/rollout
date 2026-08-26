@@ -25,7 +25,20 @@ var playPlatform = registerPlatform(&Platform{
 
 	// Keep this list in sync with registerPlayTools in mcp_play.go — every tool
 	// is exposed both ways, backed by the same handler.
-	Commands: []*cobra.Command{},
+	Commands: []*cobra.Command{
+		// Reads.
+		appsCmd,
+		tracksCmd,
+		releasesCmd,
+		artifactsCmd,
+		listingCmd,
+		imagesCmd,
+		detailsCmd,
+		testersCmd,
+		countriesCmd,
+		deviceTiersCmd,
+		editCmd,
+	},
 
 	Login:          playLoginCmd,
 	ConfigCommands: []*cobra.Command{playSetPackageCmd, playSetDeveloperIDCmd},

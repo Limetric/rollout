@@ -6,10 +6,16 @@ an MCP tool. The names differ only in convention.
 | | CLI | MCP |
 | --- | --- | --- |
 | Namespace | `rollout play …` | `play_…` |
-| Word separator | kebab-case (`halt-release`) | snake_case (`halt_release`) |
+| Grouping | by noun (`rollout play release halt`) | by verb (`play_halt_release`) |
 
-So `rollout play halt-release` is `play_halt_release`, and nothing else changes:
-same handler, same arguments, same result.
+The two front-ends order words differently on purpose. On the CLI,
+`rollout play release --help` should show everything you can do to a release.
+Over MCP an agent scans a flat list of tool names, where `play_halt_release`
+reads as an action and `play_release_halt` reads as a namespace.
+
+Because the mapping is not mechanical, every command **declares** the MCP tool
+it shares a handler with (`Annotations: mcpTool("halt_release")`), and
+`TestCLIAndMCPSurfacesMatch` fails the build when the two sets disagree.
 
 ## Rules
 
@@ -33,7 +39,19 @@ The v0.1 surface lands across the phase-2 issues; this table grows with them.
 
 | CLI | MCP | What it does |
 | --- | --- | --- |
-| — | — | Tools arrive with the read-tools issue. |
+| `rollout play apps` | `play_apps` | List the apps these credentials can reach |
+| `rollout play tracks` | `play_tracks` | Release tracks with the releases in each |
+| `rollout play releases` | `play_releases` | Every release across tracks, flattened |
+| `rollout play artifacts` | `play_artifacts` | Uploaded bundles and APKs |
+| `rollout play listing` | `play_listing` | Store listing text per locale |
+| `rollout play images` | `play_images` | Store listing images for a locale |
+| `rollout play details` | `play_details` | Default language and contact details |
+| `rollout play testers` | `play_testers` | Google Groups testing a track |
+| `rollout play countries` | `play_countries` | Where a track is available |
+| `rollout play device-tiers` | `play_device_tiers` | Device tier configurations |
+| `rollout play edit status` | `play_edit_status` | Cheap "can I publish to this app?" probe |
+
+Writes land with the remaining phase-2 issues.
 
 ## Confirming a write from either front-end
 

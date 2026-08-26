@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/spf13/cobra"
 )
 
 // listTools spins up an MCP server, registers tools through the given
@@ -176,7 +177,8 @@ func TestToolErrorNamesTheTool(t *testing.T) {
 // TestCLIAndMCPSurfacesMatch is the sync check AGENTS.md asks for: a tool that
 // exists on only one front-end is a tool an agent or a script will ask for and
 // not find. Registration happens in two places by design (a Cobra command and
-// an addTool call); this is what keeps them describing the same set.
+// an addTool call), and the two names differ on purpose, so each command
+// declares the MCP tool it shares a handler with and this compares the sets.
 func TestCLIAndMCPSurfacesMatch(t *testing.T) {
 	clearPlayEnv(t)
 	api := newFakePlayAPI(t, func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, `{}`) })
@@ -199,36 +201,43 @@ func TestCLIAndMCPSurfacesMatch(t *testing.T) {
 		registered[strings.TrimPrefix(name, playPlatformName+"_")] = true
 	}
 
-	// CLI subcommands are kebab-case (`rollout play halt-release`); MCP tools
-	// are snake_case (`play_halt_release`). The mapping is mechanical, and
-	// docs/name-map.md documents it.
-	cliNames := map[string]bool{}
+	declared := map[string]string{} // MCP tool name -> CLI path
 	for _, cmd := range playPlatform.Commands {
-		cliNames[mcpToolName(cmd.Name())] = true
+		collectMCPTools(t, cmd, "rollout play "+cmd.Name(), declared)
 	}
 
-	for name := range cliNames {
-		if !registered[name] {
-			t.Errorf("`rollout play %s` has no MCP registration — add it to registerPlayTools", name)
+	for tool, path := range declared {
+		if !registered[tool] {
+			t.Errorf("`%s` declares MCP tool %s_%s, which is not registered — add it to registerPlayTools", path, playPlatformName, tool)
 		}
 	}
-	for name := range registered {
-		if !cliNames[name] {
-			t.Errorf("MCP tool %s_%s has no CLI subcommand — add it to playPlatform.Commands", playPlatformName, name)
+	for tool := range registered {
+		if _, ok := declared[tool]; !ok {
+			t.Errorf("MCP tool %s_%s has no CLI subcommand — add one to playPlatform.Commands and tag it with mcpTool(%q)", playPlatformName, tool, tool)
 		}
 	}
 }
 
-func TestMCPToolName(t *testing.T) {
-	tests := []struct{ cli, tool string }{
-		{"tracks", "tracks"},
-		{"halt-release", "halt_release"},
-		{"upload-artifact", "upload_artifact"},
-	}
-	for _, tc := range tests {
-		if got := mcpToolName(tc.cli); got != tc.tool {
-			t.Errorf("mcpToolName(%q) = %q, want %q", tc.cli, got, tc.tool)
+// collectMCPTools walks a command subtree, gathering the MCP tool each runnable
+// command declares. A runnable command with no declaration is the failure this
+// catches: it would be reachable from the CLI and invisible to an agent.
+func collectMCPTools(t *testing.T, cmd *cobra.Command, path string, out map[string]string) {
+	t.Helper()
+	if cmd.Runnable() {
+		tool := cmd.Annotations[mcpAnnotation]
+		if tool == "" {
+			t.Errorf("`%s` is runnable but declares no MCP tool — tag it with Annotations: mcpTool(\"…\")", path)
+		} else if existing, dup := out[tool]; dup {
+			t.Errorf("`%s` and `%s` both claim MCP tool %s_%s", existing, path, playPlatformName, tool)
+		} else {
+			out[tool] = path
 		}
+	}
+	for _, sub := range cmd.Commands() {
+		if sub.Name() == "help" || sub.Name() == "completion" {
+			continue
+		}
+		collectMCPTools(t, sub, path+" "+sub.Name(), out)
 	}
 }
 
