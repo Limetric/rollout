@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Check Go formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted Go files:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Run Go checks
+        run: |
+          go vet ./...
+          go tool staticcheck ./...
+          go test ./... -count=1
+
+  build:
+    runs-on: ubuntu-latest
+    needs: go-checks
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go build -ldflags="-X main.version=dev" -o build/rollout .
+
+  integration:
+    # Live Google Play API smoke tests (the //go:build integration suite). They
+    # need real credentials, so this job runs only on manual dispatch. Without
+    # the secrets the tests skip themselves, so it is safe to trigger.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: go-checks
+    env:
+      PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+      PLAY_PACKAGE_NAME: ${{ secrets.PLAY_PACKAGE_NAME }}
+      PLAY_DEVELOPER_ID: ${{ secrets.PLAY_DEVELOPER_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go test -tags integration -count=1 -v ./...
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [go-checks, build]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build release binaries
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          for target in \
+            linux/amd64 \
+            linux/arm64 \
+            darwin/amd64 \
+            darwin/arm64 \
+            windows/amd64 \
+            windows/arm64
+          do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            ext=""
+            if [ "$goos" = "windows" ]; then
+              ext=".exe"
+            fi
+
+            out="dist/rollout-${goos}-${goarch}${ext}"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "$out" .
+          done
+
+      - name: Upload release binaries
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/rollout-*
+
+      - name: Update Homebrew tap
+        if: ${{ vars.HOMEBREW_TAP_REPOSITORY != '' }}
+        env:
+          HOMEBREW_TAP_REPOSITORY: ${{ vars.HOMEBREW_TAP_REPOSITORY }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is required when HOMEBREW_TAP_REPOSITORY is set." >&2
+            exit 1
+          fi
+
+          darwin_amd64_sha="$(sha256sum dist/rollout-darwin-amd64 | awk '{print $1}')"
+          darwin_arm64_sha="$(sha256sum dist/rollout-darwin-arm64 | awk '{print $1}')"
+          linux_amd64_sha="$(sha256sum dist/rollout-linux-amd64 | awk '{print $1}')"
+          linux_arm64_sha="$(sha256sum dist/rollout-linux-arm64 | awk '{print $1}')"
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPOSITORY}.git" homebrew-tap
+          mkdir -p homebrew-tap/Formula
+
+          bash scripts/generate-homebrew-formula.sh \
+            "${GITHUB_REF_NAME}" \
+            "${darwin_amd64_sha}" \
+            "${darwin_arm64_sha}" \
+            "${linux_amd64_sha}" \
+            "${linux_arm64_sha}" \
+            > homebrew-tap/Formula/rollout.rb
+
+          git -C homebrew-tap config user.name "github-actions[bot]"
+          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! bash scripts/homebrew-formula-has-changes.sh homebrew-tap Formula/rollout.rb; then
+            echo "Homebrew formula already matches ${GITHUB_REF_NAME}."
+            exit 0
+          fi
+
+          git -C homebrew-tap add Formula/rollout.rb
+          git -C homebrew-tap commit -m "Update rollout to ${GITHUB_REF_NAME}"
+          git -C homebrew-tap push

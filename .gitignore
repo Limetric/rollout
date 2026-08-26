@@ -1,0 +1,13 @@
+# Build artifacts live in build/ (which has its own .gitignore keeping the dir)
+/rollout
+/build/rollout
+
+# Local credentials & state — never commit
+*.local.toml
+credentials.json
+/keys/
+/.rollout/
+
+# OS / editor cruft
+.DS_Store
+*.swp
