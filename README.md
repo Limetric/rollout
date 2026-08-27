@@ -1,13 +1,21 @@
 # rollout
 
-A Google Play Console **CLI** and **MCP server** in one Go binary.
+**Ship an Android release without opening Play Console.** `rollout` is the CLI
+and MCP server that lets you (or your favorite AI agent) push a build to a
+track, watch a staged rollout climb, halt it if things look wrong, and answer
+"why did our crash rate spike" — all from a terminal instead of a maze of
+dashboard tabs. Store listings and user reviews come along for the ride. It
+talks straight to the Android Publisher and Play Developer Reporting APIs from
+your own machine — no relay server sitting between you and your app's data.
 
-`rollout` manages Android releases the way a release engineer actually works —
-upload an artifact, stage it to a track, watch the rollout, halt or complete it —
-and exposes exactly the same operations to an AI agent over MCP. Store listings,
-reviews, and Android vitals come along for the ride.
+It ships as a single binary with two front-ends over one shared set of tools:
 
-Every write is previewed and confirmed before it executes.
+- **CLI** — `rollout play releases`, `rollout play tracks`, `rollout play
+  promote …`. Scriptable, pipeable into `jq`, usable in CI. This is what the
+  bundled agent **skill** drives.
+- **MCP server** — `rollout mcp` serves the same tools over stdio to MCP hosts
+  (Claude Desktop, Cursor, …), so an agent can manage your release the same
+  careful way you would.
 
 ```bash
 rollout play releases --format table
@@ -21,15 +29,19 @@ production  | inProgress | ["42"]        | 10              | 1.5.0
 beta        | completed  | ["43"]        |                 | 1.6.0
 ```
 
+Nothing mutates on the first ask. Every write — halting a rollout, promoting a
+build, editing a listing — comes back as a preview and a confirm token first.
+You (or the agent) apply it on purpose, or it expires.
+
 ## Platforms
 
-| Platform | Namespace | Docs |
+| Platform | Setup guide | Surface |
 | --- | --- | --- |
-| Google Play | `rollout play …` / `play_…` | [docs/play.md](docs/play.md) |
+| Google Play | [`docs/play.md`](docs/play.md) | 35 tools — tracks, releases, listings, reviews, and Android vitals |
 
-The platform registry exists so a second store (App Store Connect is the obvious
-one) is a new file rather than an edit to the shared auth, config, and safety
-plumbing.
+The platform registry exists so a second store (App Store Connect is the
+obvious one) is a new file rather than an edit to the shared auth, config, and
+safety plumbing.
 
 ## Install
 
@@ -68,12 +80,15 @@ rollout doctor play
 
 Don't forget to invite the credential in Play Console → **Users & permissions**
 — authenticating isn't the same as having access. Details in
-[docs/play.md](docs/play.md#prerequisites).
+[`docs/play.md`](docs/play.md#prerequisites).
 
-## MCP hosts
+## Integrations
 
-Point your host at the binary and pass credentials through the environment — no
-config file needed:
+### As an MCP server
+
+`rollout mcp` serves the same tools over stdio, under a platform prefix —
+`play_tracks`, `play_releases`, `play_reviews`, … Point your host at the
+binary and pass credentials through the environment, no config file needed:
 
 ```json
 {
@@ -90,109 +105,85 @@ config file needed:
 }
 ```
 
-Tools appear namespaced: `play_tracks`, `play_releases`, `play_reviews`. A
-platform whose credentials do not resolve is skipped with a note in the server
-log rather than taking the whole server down, so an unconfigured second store
+A platform whose credentials don't resolve is skipped with a note on stderr
+rather than taking the whole server down, so an unconfigured second store
 never blocks the first.
 
-## Namespaces
+### As a Claude Code plugin
 
-Google Play is `rollout play …` on the CLI and `play_…` over MCP. Shared
-infrastructure is unnamespaced but takes a platform argument:
+The repo bundles a skill (`plugins/rollout/skills/rollout/SKILL.md`) that
+teaches an agent when and how to drive the CLI. If you installed `rollout` via
+Homebrew and don't have the repo cloned, install it as a plugin instead:
 
-| Command | What it does |
-| --- | --- |
-| `rollout doctor [platform]` | Check that credentials resolve and the API answers |
-| `rollout login play` | Sign in and save credentials |
-| `rollout config show` | Print the resolved configuration, secrets redacted |
-| `rollout confirm <token>` | Apply a previewed write |
-| `rollout audit` | Show every write rollout has applied |
-| `rollout mcp` | Serve the tools over stdio |
-| `rollout version` | Print the version |
+```text
+/plugin marketplace add Limetric/rollout
+/plugin install rollout@rollout
+```
 
-## Credentials
+## Concepts
 
-Two modes, and a service-account key wins when both are configured:
+### Writes preview first
 
-- **Service-account JSON key** — headless, what Google recommends for the
-  Publisher API, and what CI should use.
-- **OAuth user sign-in** — `rollout login play` runs the loopback
-  authorization-code flow with PKCE against your own Console account.
-
-Refresh tokens live in a per-user token store (0600, under the config
-directory), never in `config.toml` and never in an environment variable.
-`ROLLOUT_TOKEN_STORE` relocates it for containers and CI.
-
-## Output
-
-Reads print JSON by default, so they pipe into `jq`. `--format table` and
-`--format csv` are there when a person or a spreadsheet is reading.
+Every mutating call returns a preview and a confirm token before it touches
+anything:
 
 ```bash
-rollout play errors --days 7 --format table
+rollout play release halt --track production
+# → preview + confirm token, valid for 10 minutes
+rollout confirm <token>       # applies it (or re-run with --confirm <token>)
+rollout audit                 # log of every write rollout has applied
+```
+
+Writes are transactional — a release write opens a fresh edit, mutates one
+release, validates, and commits, deleting the edit on any failure, so nothing
+is left half-staged. It also reads the track first and touches only the
+release it names, so an in-progress rollout is never dropped by a write that
+didn't mention it. Halting a rollout, completing a production rollout, and
+deleting a listing or image type ask for a second confirmation, since none of
+those undo with the opposite command.
+
+Guard rails are optional and off by default — a production lock, a rollout
+percentage ceiling, a blocked-operations list — and they're re-checked at
+confirm time, not just when the preview is issued. See
+[`docs/play.md`](docs/play.md#guard-rails) for the full list.
+
+### Where the refresh token lives
+
+`rollout login play` writes the refresh token to a per-platform **token
+store** (`0600`, under the config directory), never to `config.toml` and
+never to an environment variable:
+
+```bash
+rollout doctor play                     # store location, writability, sign-in age
+export ROLLOUT_TOKEN_STORE=/path/to/tokens   # containers/CI: mount a writable volume
+```
+
+A service-account JSON key skips the token store entirely and wins when both
+credential modes are configured — it's what CI and Google's own docs
+recommend for the Publisher API.
+
+### Defaults and output
+
+```bash
+rollout config play set-package com.example.app   # drop --package everywhere else
+rollout play releases --format table               # or --format csv for a spreadsheet
 rollout play vitals --metric crashrate --dimension versionCode | jq '.rows'
 ```
 
-Human-facing output — `login`, `doctor`, `config show`, table headers, write
-previews — is colored when it is going to a terminal. Redirect it or pipe it
-anywhere else and the color disappears on its own, so `--format json`,
-`--format csv`, and `rollout audit` stay byte-identical for scripts. Override
-the detection with `--color always|never|auto`; `NO_COLOR` and `TERM=dumb` are
-honored.
-
-## Safety
-
-No mutating call executes on first request. A write tool returns a preview and a
-confirm token valid for 10 minutes; you apply it with `--confirm <token>` or
-`rollout confirm <token>`. Every applied write — and every failed apply — is
-appended to an audit log you can read with `rollout audit`.
-
-Writes are transactional. A release write opens a fresh edit, mutates one
-release, validates, and commits; anything that fails along the way deletes the
-edit, so nothing is left half-staged. A release write also reads the track
-first and touches only the release it names — an in-progress rollout is never
-dropped by a write that did not mention it.
-
-Two confirmations are required for the operations that cannot be undone by
-running the opposite command: halting a rollout, completing a production
-rollout, and deleting a listing or a whole image type.
-
-### Guard rails
-
-Optional, and off by default. Set them in the environment or in `config.toml`:
-
-```toml
-[play.safety]
-production_lock = true                 # PLAY_PRODUCTION_LOCK=1
-max_rollout_fraction = 0.2             # PLAY_MAX_ROLLOUT_FRACTION=0.2
-blocked_operations = ["halt_release"]  # PLAY_BLOCKED_OPS=halt_release
-```
-
-| Setting | Effect |
-| --- | --- |
-| `production_lock` | Every write touching the `production` track takes a second confirmation |
-| `max_rollout_fraction` | Refuses a write past this staged-rollout fraction — `0.2` lets CI stage and grow a rollout but never finish one |
-| `blocked_operations` | Refuses these tools outright |
-
-They are re-checked when a token is confirmed, not only when it is issued, so
-tightening one always wins over a preview that is already in flight.
+Reads print JSON by default, so they pipe straight into `jq`. Human-facing
+output — `login`, `doctor`, `config show`, table headers, write previews — is
+colored on a terminal and plain everywhere else, so scripts and `rollout
+audit` stay byte-identical either way. Override with `--color always|never|auto`;
+`NO_COLOR` and `TERM=dumb` are honored too.
 
 ## Documentation
 
-- [docs/play.md](docs/play.md) — setup, tool coverage, release semantics, troubleshooting
-- [docs/reporting.md](docs/reporting.md) — vitals metric sets, dimensions, thresholds
-- [docs/name-map.md](docs/name-map.md) — CLI ↔ MCP name map
+- [`docs/play.md`](docs/play.md) — setup, tool coverage, release semantics, troubleshooting
+- [`docs/reporting.md`](docs/reporting.md) — vitals metric sets, dimensions, thresholds
+- [`docs/name-map.md`](docs/name-map.md) — CLI ↔ MCP name map
 
-## Building from source
-
-```bash
-go build -o build/rollout .
-go test ./... -count=1
-go vet ./... && go tool staticcheck ./...
-```
-
-Contributor conventions are in [AGENTS.md](AGENTS.md).
+See [`AGENTS.md`](AGENTS.md) for the contributor workflow and conventions.
 
 ## License
 
-Apache-2.0.
+Apache-2.0. See [`LICENSE`](LICENSE).
