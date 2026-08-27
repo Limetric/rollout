@@ -1,6 +1,6 @@
 ---
 name: rollout
-description: Use when working with Google Play — checking what version is live, staging or growing a rollout, promoting a build between tracks, halting a bad release, editing store listings, replying to reviews, or reading crash/ANR vitals. Drives the `rollout` CLI. Triggers include "google play", "play console", "staged rollout", "release notes", "store listing", "app bundle", "crash rate", "ANR", "promote to production".
+description: Use when working with Google Play — checking what version is live, staging or growing a rollout, promoting a build between tracks, halting a bad release, editing store listings, managing in-app products and subscriptions, replying to reviews, or reading crash/ANR vitals. Drives the `rollout` CLI. Triggers include "google play", "play console", "staged rollout", "release notes", "store listing", "app bundle", "crash rate", "ANR", "promote to production", "in-app product", "subscription", "base plan", "offer".
 ---
 
 # rollout — Google Play via the `rollout` CLI
@@ -72,8 +72,9 @@ Re-running the original command with `--confirm <token>` works too. Tokens last
 
 **Destructive operations return a second token that must be confirmed once
 more**: halting a rollout, completing a production rollout, deleting a store
-listing, and deleting a whole image type. That is deliberate — surface it to the
-user rather than confirming twice on your own initiative.
+listing, deleting a whole image type, and deactivating a subscription base
+plan. That is deliberate — surface it to the user rather than confirming twice
+on your own initiative.
 
 Never skip the preview, never guess a token, and never confirm a write the user
 has not approved. `rollout audit` lists every write that has been applied.
@@ -124,6 +125,39 @@ plan, skips images whose SHA-256 already matches the store, and applies
 everything in one edit — if any locale fails, none of it lands. Limits are title
 30, short description 80, full description 4000 characters.
 
+## Monetization
+
+```bash
+rollout play products --format table            # managed and one-time products
+rollout play subscriptions --format table       # base plans and offers inlined
+rollout play subscription get --id premium
+
+rollout play product set --sku coins_100 --from-file product.json
+rollout play subscription base-plan set-state --id premium --base-plan monthly --state inactive
+rollout play subscription offer set-state --id premium --base-plan monthly --offer intro --state active
+```
+
+Things to get right here, because the API is unforgiving and the words are
+misleading:
+
+- **Deactivating does not cancel anybody.** It stops *new* subscribers. Everyone
+  already on the base plan keeps their subscription and keeps being billed. Say
+  this to the user before they confirm — it is the assumption they will have
+  wrong. Deactivating a base plan takes **two** confirmations.
+- **An offer is only live while its base plan is active**, so activating an
+  offer under an inactive plan does nothing visible.
+- **`product set` replaces the whole price map rather than merging it.** A
+  region missing from the JSON file loses its price. The preview lists every
+  add, change, and `REMOVED` region — read those lines out; they are the reason
+  this write previews.
+- Subscriptions are not in `products` and cannot be written with `product set`;
+  they have their own commands. `rollout` says so if you try.
+- Archiving a subscription is **not supported by Play's API** and has no command.
+  Do not go looking for one.
+
+Unlike a release, these writes are not staged in an edit — a confirmed one is
+live immediately.
+
 ## Reviews
 
 ```bash
@@ -141,15 +175,16 @@ Every command below is `rollout play <command>`; the shared ones (`confirm`,
 `audit`, `doctor`, `config`) are `rollout <command>`.
 
 **Reads**: `apps`, `tracks`, `releases`, `artifacts`, `listing`, `images`,
-`details`, `testers`, `countries`, `device-tiers`, `edit status`, `reviews`,
-`review get`, `vitals`, `vitals summary`, `errors`, `error reports`,
-`anomalies`.
+`details`, `testers`, `countries`, `device-tiers`, `edit status`, `products`,
+`subscriptions`, `subscription get`, `reviews`, `review get`, `vitals`,
+`vitals summary`, `errors`, `error reports`, `anomalies`.
 
 **Writes** (preview then confirm): `upload`, `release create`, `release update`,
 `release halt`, `release resume`, `release complete`, `promote`, `testers set`,
 `countries set`, `deobfuscation upload`, `listing set`, `listing delete`,
 `listing sync`, `images upload`, `images delete`, `details set`,
-`review reply`.
+`product set`, `subscription base-plan set-state`,
+`subscription offer set-state`, `review reply`.
 
 Run `rollout play <command> --help` for the flags. Full documentation is in the
 repository's `docs/play.md`.

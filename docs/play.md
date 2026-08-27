@@ -137,6 +137,17 @@ rollout confirm <token>
 rollout confirm <second-token>
 ```
 
+```bash
+# What is on sale?
+rollout play products --format table
+rollout play subscriptions --format table
+
+# Retire a price point: stops new subscribers, keeps existing ones
+rollout play subscription base-plan set-state --id premium --base-plan monthly --state inactive
+rollout confirm <token>
+rollout confirm <second-token>
+```
+
 ## Tool coverage
 
 Reads:
@@ -180,6 +191,17 @@ Store listing (all preview first):
 | `play_delete_images` | Delete images by id, or a whole type (two confirmations) |
 | `play_update_details` | Set default language and contact details |
 | `play_sync_listing` | Reconcile a metadata directory with the store, in one edit |
+
+Monetization:
+
+| Tool | What it does |
+| --- | --- |
+| `play_products` | In-app products: legacy managed products and one-time products, merged |
+| `play_subscriptions` | Subscriptions with their base plans and offers inlined |
+| `play_subscription` | One subscription in detail |
+| `play_update_product` | Create or update a managed product (previews per-region price deltas) |
+| `play_set_base_plan_state` | Activate or deactivate a base plan (two confirmations to deactivate) |
+| `play_set_offer_state` | Activate or deactivate a subscription offer |
 
 Reviews:
 
@@ -229,6 +251,60 @@ Changes are staged in an **edit**, a server-side transaction. `rollout` opens
 one per call, and a write validates before it commits and deletes the edit on
 any failure — so a rejected write leaves nothing half-staged. Edit IDs are never
 persisted: they expire, and opening a new edit invalidates the last.
+
+## Monetization semantics
+
+Play splits what you sell across three resources, and which one a thing lives in
+decides what can write to it.
+
+| Resource | Holds | Written by |
+| --- | --- | --- |
+| `inappproducts` | Managed products (the original catalogue) | `play_update_product` |
+| `monetization.oneTimeProducts` | One-time products with purchase options | read-only here |
+| `monetization.subscriptions` | Subscriptions, their base plans, and offers | `play_set_base_plan_state`, `play_set_offer_state` |
+
+`play_products` reads the first two and tags every row with its source.
+Subscriptions are deliberately absent from it: Google's guidance is that
+`inappproducts` must no longer be used to read them, and a flat product row
+cannot represent base plans and offers. `play_subscriptions` returns those.
+
+A subscription is three levels deep — subscription → base plan → offer — and
+only the first two arrive together. Offers are fetched separately, but in one
+call for the whole app rather than one per base plan, so inlining them costs a
+single extra request.
+
+Three rules worth knowing before a write:
+
+- **Deactivating stops new subscribers, not existing ones.** Everybody already
+  on a base plan keeps their subscription and keeps being billed. Deactivating a
+  base plan takes two confirmations, because every offer under it goes with it.
+- **An offer is only live while its base plan is active.** Activating an offer
+  under an inactive plan changes nothing a user can see.
+- **A product write replaces the price map, it does not merge it.** A region
+  missing from your `--from-file` JSON loses its price. The preview says so
+  region by region — additions, changes, and removals — before anything is sent:
+
+  ```
+  Update managed product coins_100 on com.example.app:
+    price in DE: EUR 4.99 → EUR 5.99
+    price in FR: added at EUR 5.99
+    price in GB: REMOVED (was GBP 3.99)
+  ```
+
+  Pass `--auto-convert-missing-prices` to let Play price the regions you did not
+  name, converted from the default price.
+
+Unlike a release, none of these is staged in an edit: a confirmed monetization
+write is live immediately. That is why they all preview first.
+
+**Not implemented: archiving a subscription.** Google marks
+`monetization.subscriptions.archive` deprecated in the API discovery document
+with the description "subscription archiving is not supported", and
+`Subscription.archived` is deprecated alongside it. An archive tool would exist
+only to report that the API will not do it — worse than its absence, because an
+agent has to call it to find that out — so there isn't one.
+`rollout play subscriptions --show-archived` still surfaces subscriptions
+archived before Play withdrew the feature.
 
 ## Guard rails
 

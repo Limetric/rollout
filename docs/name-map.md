@@ -74,6 +74,23 @@ it shares a handler with (`Annotations: mcpTool("halt_release")`), and
 | `rollout play images delete` | `play_delete_images` |
 | `rollout play details set` | `play_update_details` |
 
+## Monetization
+
+| CLI | MCP |
+| --- | --- |
+| `rollout play products` | `play_products` |
+| `rollout play product set` | `play_update_product` |
+| `rollout play subscriptions` | `play_subscriptions` |
+| `rollout play subscription get` | `play_subscription` |
+| `rollout play subscription base-plan set-state` | `play_set_base_plan_state` |
+| `rollout play subscription offer set-state` | `play_set_offer_state` |
+
+The state changes are the one place the noun-first / verb-first split does more
+than reorder words. On the CLI `activate` and `deactivate` would read as two
+verbs; over MCP they are one operation with two values, and a tool is registered
+once under one name. So the state is an argument — `--state active|inactive` —
+rather than two commands that would both claim `play_set_base_plan_state`.
+
 ## Reviews
 
 | CLI | MCP |

@@ -39,6 +39,12 @@ var playPlatform = registerPlatform(&Platform{
 		deviceTiersCmd,
 		editCmd,
 
+		// Monetization.
+		productsCmd,
+		productCmd,
+		subscriptionsCmd,
+		subscriptionCmd,
+
 		// Release management writes.
 		uploadCmd,
 		releaseCmd,

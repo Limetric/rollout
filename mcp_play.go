@@ -72,6 +72,32 @@ func registerPlayTools(ctx context.Context, reg *toolRegistrar) error {
 		"Check whether these credentials can actually publish to this app, by opening and immediately discarding an edit. Call this before staging a write: a credential that authenticates fine can still lack access to a given app.",
 		runEditStatus)
 
+	// --- monetization ---
+
+	addTool(reg, client, "products",
+		"List an app's in-app products: legacy managed products and the newer one-time products, merged into one list with each row naming the API it came from. Subscriptions are deliberately not here — they have base plans and offers that this shape cannot represent, so read them with play_subscriptions.",
+		runProducts)
+
+	addTool(reg, client, "subscriptions",
+		"List subscriptions with their base plans and offers inlined. A base plan is the price and billing period; an offer is a temporary promotion extending one. The state on each (DRAFT, ACTIVE, INACTIVE) is what decides whether new subscribers can sign up.",
+		runSubscriptions)
+
+	addTool(reg, client, "subscription",
+		"Read one subscription by product ID, with its base plans, their regional availability, and every offer hanging off them.",
+		runSubscription)
+
+	addTool(reg, client, "update_product",
+		"Create or update a managed in-app product. The preview diffs prices region by region, including the ones a write would REMOVE: the API replaces the whole price map rather than merging it, so a region missing from the file loses its price. Previews first and returns a confirm token.",
+		runUpdateProduct)
+
+	addTool(reg, client, "set_base_plan_state",
+		"Activate or deactivate a subscription's base plan. Deactivating stops new subscribers only — everybody already on the plan keeps their subscription and keeps being billed — and takes two confirmations, because every offer under the base plan goes with it.",
+		runSetBasePlanState)
+
+	addTool(reg, client, "set_offer_state",
+		"Activate or deactivate a subscription offer. An offer is only live while its base plan is active too. Previews first and returns a confirm token.",
+		runSetOfferState)
+
 	// --- release management writes ---
 
 	addTool(reg, client, "upload_artifact",

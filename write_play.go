@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -57,10 +58,28 @@ type editRequest struct {
 	Method string          `json:"method"`
 	Path   string          `json:"path"`
 	Body   json.RawMessage `json:"body,omitempty"`
+	// Query carries the call's query parameters. Some of the non-edit
+	// resources put real behaviour there rather than in the body —
+	// `autoConvertMissingPrices` on an in-app product decides whether the
+	// regions you did not price get one at all — so it has to survive staging
+	// alongside the body.
+	Query map[string]string `json:"query,omitempty"`
 	// Describe names what this call does, for the error message when it is the
 	// one that fails. A multi-locale listing sync that fails must say which
 	// locale, and the path alone does not read as an explanation.
 	Describe string `json:"describe,omitempty"`
+}
+
+// values renders the staged query parameters, or nil when there are none.
+func (r editRequest) values() url.Values {
+	if len(r.Query) == 0 {
+		return nil
+	}
+	query := url.Values{}
+	for k, v := range r.Query {
+		query.Set(k, v)
+	}
+	return query
 }
 
 // editPayload is the staged intent for dispatchEdit and dispatchDirect.
@@ -174,6 +193,7 @@ func previewPlayWrite(req stagePlayWriteRequest) (WriteResult, error) {
 		Summary:         req.Summary,
 		Dispatch:        req.Dispatch,
 		Payload:         payload,
+		ApplyNote:       playApplyNote(req.Dispatch),
 		Track:           req.Track,
 		RolloutFraction: req.RolloutFraction,
 		RequiresDouble:  req.RequiresDouble,
@@ -183,6 +203,20 @@ func previewPlayWrite(req stagePlayWriteRequest) (WriteResult, error) {
 		return WriteResult{}, err
 	}
 	return previewResult(p), nil
+}
+
+// playApplyNote says what confirming a staged write will actually do.
+//
+// Most Play writes run inside an edit: the API validates the whole transaction
+// before it commits, and a rejected write leaves nothing behind. The
+// monetization resources and review replies are not edit-scoped, and telling
+// someone their price change will be validated first — when it will not — is
+// exactly the wrong thing to say in the sentence they read before confirming.
+func playApplyNote(dispatch string) string {
+	if dispatch == dispatchDirect {
+		return "This resource is not edit-scoped: confirming sends the change straight to Play, where it takes effect immediately."
+	}
+	return "Confirming opens a fresh edit, validates it, and commits."
 }
 
 // applyMutation makes *Client a mutationApplier: it executes a consumed pending
@@ -256,7 +290,7 @@ func (e *editSession) run(ctx context.Context, req editRequest, out *json.RawMes
 	if len(req.Body) > 0 {
 		body = req.Body
 	}
-	err := e.c.doWrite(ctx, req.Method, e.path(req.Path), nil, body, out)
+	err := e.c.doWrite(ctx, req.Method, e.path(req.Path), req.values(), body, out)
 	if err == nil {
 		return nil
 	}
@@ -481,7 +515,7 @@ func (c *Client) applyDirectWrite(ctx context.Context, p *PendingMutation) (*app
 		if len(req.Body) > 0 {
 			body = req.Body
 		}
-		if err := c.doWrite(ctx, req.Method, req.Path, nil, body, &out); err != nil {
+		if err := c.doWrite(ctx, req.Method, req.Path, req.values(), body, &out); err != nil {
 			if req.Describe != "" {
 				return nil, fmt.Errorf("%s: %w", req.Describe, err)
 			}
