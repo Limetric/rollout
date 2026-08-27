@@ -109,7 +109,10 @@ type platformVerdict struct {
 // (the live probes already printed their own diagnostics).
 func (v *platformVerdict) exit() error {
 	switch v.result {
-	case liveOK, liveOffline:
+	// liveUnverified exits clean: a credential Google accepts, with no app to
+	// probe, is a setup nobody can call broken. The status line says what is
+	// missing; failing CI over it would only teach users to stop running doctor.
+	case liveOK, liveOffline, liveUnverified:
 		return nil
 	case liveUnconfigured:
 		return v.err
@@ -126,6 +129,7 @@ type liveResult int
 const (
 	liveOK           liveResult = iota // the API answered and real calls work
 	liveOffline                        // --offline: credentials resolve, API not probed
+	liveUnverified                     // the API accepted the credential but nothing could be proved about what it may do
 	liveInconclusive                   // couldn't reach the API (transport/5xx) — setup unconfirmed, not broken
 	liveFailed                         // the API definitively rejected us (4xx) — setup is broken
 	liveUnconfigured                   // credentials didn't even resolve
@@ -145,6 +149,10 @@ func statusLine(s styles, res liveResult, err error) string {
 		return fmt.Sprintf("\n%s %s %s\n", label, s.success("READY"), s.muted("(live check passed)"))
 	case liveOffline:
 		return fmt.Sprintf("\n%s %s — credentials resolve (offline check). Run `rollout doctor` to verify against the API.\n", label, s.success("READY"))
+	case liveUnverified:
+		// Deliberately generic: what is missing, and how to supply it, is the
+		// platform's business and its probe lines above have already said it.
+		return fmt.Sprintf("\n%s %s — the API accepted the credential, but nothing above could confirm what it may do (see the probes).\n", label, s.success("READY"))
 	case liveUnconfigured:
 		return fmt.Sprintf("\n%s %s — %v\n", label, s.failure("NOT READY"), err)
 	case liveInconclusive:

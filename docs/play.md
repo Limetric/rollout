@@ -67,7 +67,7 @@ Everything can come from the environment; no config file is needed.
 | `PLAY_CLIENT_ID` / `PLAY_CLIENT_SECRET` | OAuth client, for the user sign-in flow |
 | `PLAY_DEVELOPER_ID` | Play Console developer account ID (users and permissions tools) |
 | `PLAY_REPORTS_BUCKET` | `pubsite_prod_rev_…` GCS bucket for CSV report exports |
-| `PLAY_API_BASE_URL` / `PLAY_REPORTING_BASE_URL` | endpoint overrides (tests) |
+| `PLAY_API_BASE_URL` / `PLAY_REPORTING_BASE_URL` / `PLAY_STORAGE_BASE_URL` | endpoint overrides (tests) |
 | `ROLLOUT_TOKEN_STORE` | where the refresh-token store lives |
 
 `GOOGLE_APPLICATION_CREDENTIALS` is accepted as a fallback, so a machine already
@@ -76,9 +76,28 @@ set up for another Google tool works — but `PLAY_SERVICE_ACCOUNT_FILE` wins.
 Check it with:
 
 ```bash
-rollout doctor play            # opens and deletes a real edit
+rollout doctor play            # probes every API surface for real
 rollout doctor play --offline  # credentials only, no network
 ```
+
+`rollout` talks to as many as three services, each with its own permission, so
+doctor probes each one separately and reports it on its own line:
+
+| Probe | What it calls | What a failure means |
+| --- | --- | --- |
+| `publish probe` | opens and deletes a real edit on the default app | the setup is broken — this is what every write needs |
+| `reporting probe` | `apps:search` on the Reporting API | vitals, errors and app listing are unavailable; publishing is unaffected |
+| `reports probe` | lists one object in the reports bucket, only when `reports_bucket` is set | the CSV exports cannot be read |
+
+Only the publish probe decides the verdict. A Release Manager credential is
+refused by the Reporting API and still publishes perfectly, so that gap is
+reported as a missing capability rather than a broken setup — while a reports
+bucket that cannot be read *is* a failure, because setting one says you want it.
+
+With no default app there is nothing to open an edit on, so the publish probe is
+skipped and the reporting probe stands in: it can prove the credential is real
+(and list the apps it can see), but not that it may publish to any given app.
+Doctor says so rather than claiming a clean bill of health, and still exits 0.
 
 ## Pick a default app
 
@@ -242,7 +261,15 @@ email (`rollout config show` prints it) and grant it access to the app.
 
 **`403` on vitals only** — the Reporting API needs *View app information
 (read-only)*, which Release Manager does not include, and the Google Play
-Developer Reporting API must be enabled in the Cloud project.
+Developer Reporting API must be enabled in the Cloud project. `rollout doctor
+play` reports this as a missing capability, not a broken setup.
+
+**`403` on the reports bucket after setting `reports_bucket`** — if you signed
+in with `rollout login play` *before* setting it, the saved token predates the
+Cloud Storage scope: that scope is requested only when a bucket is configured,
+so the config looks right and the token simply lacks it. Run `rollout login
+play` again to re-consent. For a service account, grant it report access in
+Play Console → Users & permissions instead.
 
 **`404` on the package** — check the spelling, and remember a new app must be
 created in the Console and have one uploaded artifact before the API can see it.

@@ -267,10 +267,15 @@ func (c *Client) listAnomalies(ctx context.Context, pkg, filter string) ([]json.
 
 // reportingPermissionHint explains the failure that catches everyone: a
 // service account with full release permissions still cannot read vitals.
+// reportingGrantHint names what a refused Reporting call is actually missing.
+// It is a separate service from the Publisher API, so the release permissions
+// that fix a publishing 403 do nothing here.
+const reportingGrantHint = `the Reporting API needs "View app information (read-only)" in Play Console → Users & permissions; Release Manager alone does not grant it, and the Google Play Developer Reporting API must be enabled in the Cloud project`
+
 func reportingPermissionHint(err error) error {
 	var apiErr *apiError
 	if !errors.As(err, &apiErr) || (apiErr.Status != http.StatusForbidden && apiErr.Status != http.StatusUnauthorized) {
 		return err
 	}
-	return fmt.Errorf("%w — the Reporting API needs \"View app information (read-only)\" in Play Console → Users & permissions; Release Manager alone does not grant it, and the Google Play Developer Reporting API must be enabled in the Cloud project", err)
+	return fmt.Errorf("%w — %s", err, reportingGrantHint)
 }

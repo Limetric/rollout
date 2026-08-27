@@ -351,6 +351,37 @@ func TestSavePlayCredentialsRollsBackOnStoreFailure(t *testing.T) {
 	}
 }
 
+// TestServiceAccountLoginWithoutAPackageListsTheApps: the user's next step is
+// choosing a default app, and the sign-in has just proved which ones this key
+// can reach — making them run another command to find out is a wasted round.
+func TestServiceAccountLoginWithoutAPackageListsTheApps(t *testing.T) {
+	clearPlayEnv(t)
+	isolateTokenStore(t)
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "key.json")
+	if err := os.WriteFile(keyPath, []byte(generateServiceAccountKey(t, "bot@p.iam.gserviceaccount.com")), 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apps":[{"packageName":"com.example.app"},{"packageName":"com.example.other"}]}`))
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	cfg := &PlayConfig{BaseURL: srv.URL, ReportingBaseURL: srv.URL, StorageBaseURL: srv.URL}
+	if err := runServiceAccountLogin(context.Background(), &out, cfg, filepath.Join(dir, "config.toml"), keyPath); err != nil {
+		t.Fatalf("runServiceAccountLogin: %v", err)
+	}
+	for _, want := range []string{"com.example.app", "com.example.other", "set-package", "READY"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("login output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 // TestServiceAccountLoginRecordsThePathNotTheKey: nothing is copied, so there
 // is one copy of the private key on the machine, in the place the user chose.
 func TestServiceAccountLoginRecordsThePathNotTheKey(t *testing.T) {
@@ -365,10 +396,17 @@ func TestServiceAccountLoginRecordsThePathNotTheKey(t *testing.T) {
 	}
 	configFile := filepath.Join(dir, "config.toml")
 
+	// With no package there is no app to open an edit on, but the sign-in still
+	// asks Reporting what this key can see — point that at a fake so the test
+	// stays offline.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"apps":[]}`))
+	}))
+	defer srv.Close()
+
 	var out bytes.Buffer
-	cfg := &PlayConfig{BaseURL: defaultPlayBaseURL}
-	// No package name configured, so the live probe is skipped and this stays
-	// an offline test.
+	cfg := &PlayConfig{BaseURL: srv.URL, ReportingBaseURL: srv.URL, StorageBaseURL: srv.URL}
 	if err := runServiceAccountLogin(context.Background(), &out, cfg, configFile, keyPath); err != nil {
 		t.Fatalf("runServiceAccountLogin: %v", err)
 	}

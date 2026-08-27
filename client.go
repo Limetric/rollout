@@ -121,6 +121,34 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	return c.doAt(ctx, c.cfg.BaseURL+"/"+publisherAPIPath+"/"+path, method, query, body, out, policyFor(method))
 }
 
+// storageAPIPath is the version-carrying prefix for Cloud Storage JSON calls.
+const storageAPIPath = "storage/v1"
+
+// listReportObjects asks the reports bucket for a single object name. Nothing
+// reads the CSV exports yet; this exists so `doctor` can prove the bucket is
+// reachable, because nothing local can. The devstorage scope is added to the
+// credential only when a reports bucket is configured (see PlayConfig.scopes),
+// so a user who signed in before setting one holds a token that predates the
+// scope — a state the config looks perfectly right in and only a live call
+// exposes.
+//
+// Listing is the operation a report reader will perform, so it is the one worth
+// proving; asking for bucket metadata instead would check a different
+// permission from the one that matters.
+func (c *Client) listReportObjects(ctx context.Context, bucket string) error {
+	query := url.Values{"maxResults": {"1"}, "fields": {"items/name"}}
+	rawURL := c.cfg.StorageBaseURL + "/" + storageAPIPath + "/b/" + url.PathEscape(bucket) + "/o"
+	var page struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	if err := c.doAt(ctx, rawURL, http.MethodGet, query, nil, &page, retryIdempotent); err != nil {
+		return fmt.Errorf("list gs://%s: %w", bucket, err)
+	}
+	return nil
+}
+
 // doWrite is do for a call that must never be retried automatically.
 func (c *Client) doWrite(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	return c.doAt(ctx, c.cfg.BaseURL+"/"+publisherAPIPath+"/"+path, method, query, body, out, retryNever)
@@ -211,8 +239,16 @@ type apiError struct {
 
 func (e *apiError) Error() string {
 	if hint := e.hint(); hint != "" {
-		return fmt.Sprintf("Play API %d (%s): %s — %s", e.Status, e.reasonOrStatus(), e.Message, hint)
+		return e.bare() + " — " + hint
 	}
+	return e.bare()
+}
+
+// bare renders what the API actually said, without rollout's hint. A caller
+// that supplies its own — the Reporting probes, whose 403 has nothing to do
+// with release permissions — would otherwise print two pieces of advice, one of
+// them for the wrong API.
+func (e *apiError) bare() string {
 	return fmt.Sprintf("Play API %d (%s): %s", e.Status, e.reasonOrStatus(), e.Message)
 }
 

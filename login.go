@@ -444,15 +444,23 @@ func runNonInteractiveLogin(ctx context.Context, out io.Writer, cfg *PlayConfig,
 	return verifyLogin(ctx, out, cfg)
 }
 
-// verifyLogin runs the same live probe `rollout doctor play` does, so a
+// verifyLogin runs the same live probes `rollout doctor play` does, so a
 // successful login means the API answered rather than that a file was written.
 func verifyLogin(ctx context.Context, out io.Writer, cfg *PlayConfig) error {
 	s := newStyles(out)
+	res, err := runPlayDoctorLive(ctx, out, cfg)
 	if cfg.PackageName == "" {
-		fmt.Fprintf(out, "%s — set a default app with `rollout config play set-package com.example.app`, then try `rollout play tracks`.\n", s.success("READY"))
+		// With no app there is nothing to publish-probe, but the probes above
+		// still list what this credential can see — which is the choice the
+		// user has to make next. The sign-in itself already proved the
+		// credential, so only an outright rejection is worth failing over: a
+		// Reporting hiccup must not turn a completed login into an error.
+		if res == liveFailed {
+			return err
+		}
+		fmt.Fprintf(out, "\n%s — set a default app with `rollout config play set-package com.example.app`, then try `rollout play tracks`.\n", s.success("READY"))
 		return nil
 	}
-	res, err := runPlayDoctorLive(ctx, out, cfg)
 	if err != nil {
 		return err
 	}

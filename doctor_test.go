@@ -63,7 +63,7 @@ func TestLiveVerdictFor(t *testing.T) {
 func TestLiveResultSeverityOrder(t *testing.T) {
 	// A multi-platform doctor run exits on its worst result, so the ordering is
 	// load-bearing, not cosmetic.
-	ordered := []liveResult{liveOK, liveOffline, liveInconclusive, liveFailed, liveUnconfigured}
+	ordered := []liveResult{liveOK, liveOffline, liveUnverified, liveInconclusive, liveFailed, liveUnconfigured}
 	for i := 1; i < len(ordered); i++ {
 		if !ordered[i].worseThan(ordered[i-1]) {
 			t.Errorf("%v should rank worse than %v", ordered[i], ordered[i-1])
@@ -79,6 +79,7 @@ func TestStatusLineVerdicts(t *testing.T) {
 	}{
 		{liveOK, nil, "READY"},
 		{liveOffline, nil, "READY"},
+		{liveUnverified, nil, "READY"},
 		{liveUnconfigured, errors.New("set PLAY_SERVICE_ACCOUNT_FILE"), "NOT READY — set PLAY_SERVICE_ACCOUNT_FILE"},
 		{liveFailed, nil, "NOT READY"},
 		{liveInconclusive, nil, "INCONCLUSIVE"},
@@ -98,6 +99,9 @@ func TestPlatformVerdictExitCodes(t *testing.T) {
 	}{
 		{"ready exits clean", platformVerdict{result: liveOK}, 0},
 		{"offline exits clean", platformVerdict{result: liveOffline}, 0},
+		// A credential Google accepts, with nothing to probe it against, is not
+		// something CI should fail over.
+		{"unverified exits clean", platformVerdict{result: liveUnverified}, 0},
 		{"inconclusive exits 2", platformVerdict{result: liveInconclusive, err: errors.New("unreachable")}, 2},
 		{"failed exits 1", platformVerdict{result: liveFailed, err: errors.New("rejected")}, 1},
 	}
