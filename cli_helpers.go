@@ -40,7 +40,9 @@ func printResult(w io.Writer, format string, res any) error {
 			return fmt.Errorf("this command cannot render %s output", f)
 		}
 		rows, fields := rs.tableRows()
-		rendered := formatTable(rows, fields)
+		// CSV is data — it never gets color, even on a terminal, because the
+		// usual next step is a redirect into a file a spreadsheet will read.
+		rendered := formatTable(newStyles(w), rows, fields)
 		if f == "csv" {
 			rendered = formatCSV(rows, fields)
 		}
@@ -57,9 +59,14 @@ func addFormatFlag(cmd *cobra.Command, dst *string) {
 }
 
 // formatTable renders rows as an aligned text table over the named fields.
-func formatTable(rows []json.RawMessage, fields []string) string {
+//
+// Only the header and the rule under it are styled, and only after every width
+// has been measured from the plain text — an escape code has no display width,
+// so coloring a cell before padding it would push every later column out of
+// alignment.
+func formatTable(s styles, rows []json.RawMessage, fields []string) string {
 	if len(rows) == 0 {
-		return "No results found.\n"
+		return s.muted("No results found.") + "\n"
 	}
 	widths := make([]int, len(fields))
 	for i, f := range fields {
@@ -84,14 +91,14 @@ func formatTable(rows []json.RawMessage, fields []string) string {
 	for i, f := range fields {
 		header[i] = padRight(f, widths[i])
 	}
-	b.WriteString(strings.Join(header, " | "))
+	b.WriteString(s.header(strings.Join(header, " | ")))
 	b.WriteByte('\n')
 
 	sep := make([]string, len(widths))
 	for i, w := range widths {
 		sep[i] = strings.Repeat("-", w)
 	}
-	b.WriteString(strings.Join(sep, "-+-"))
+	b.WriteString(s.muted(strings.Join(sep, "-+-")))
 	b.WriteByte('\n')
 
 	for _, row := range cells {

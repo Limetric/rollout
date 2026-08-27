@@ -36,6 +36,9 @@ var rootCmd = &cobra.Command{
 	Long:          "rollout exposes app-distribution tools as both a CLI and an MCP server (`rollout mcp`).\n\nEvery platform has its own namespace: `rollout play tracks` on the CLI,\n`play_tracks` over MCP.\n\nCredentials are read from the environment or a TOML config file.\nRun `rollout doctor` to check your setup.",
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	PersistentPreRunE: func(*cobra.Command, []string) error {
+		return validateColorMode(colorMode)
+	},
 }
 
 var versionVerbose bool
@@ -58,6 +61,7 @@ func init() {
 	rootCmd.Version = versionString()
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "", "path to TOML credentials/settings file (env overrides)")
+	rootCmd.PersistentFlags().StringVar(&colorMode, "color", "auto", "colorize terminal output: auto, always, or never (NO_COLOR is honored)")
 
 	versionCmd.Flags().BoolVarP(&versionVerbose, "verbose", "v", false, "print detailed build metadata")
 
@@ -98,6 +102,6 @@ func main() {
 	if errors.As(err, &ex) {
 		os.Exit(ex.code)
 	}
-	fmt.Fprintln(os.Stderr, "error:", err)
+	fmt.Fprintln(os.Stderr, newStyles(os.Stderr).failure("error:"), err)
 	os.Exit(1)
 }

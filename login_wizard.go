@@ -139,21 +139,22 @@ const (
 // offerToOpen prints an instruction and URL and (unless --no-browser) offers to
 // open it, then waits for the user to press Enter.
 func offerToOpen(p prompter, out io.Writer, instruction, url string, openFn func(string) error) error {
-	fmt.Fprintf(out, "   %s\n   → %s\n", instruction, url)
+	s := newStyles(out)
+	fmt.Fprintf(out, "   %s\n   %s\n", instruction, s.arrow(url))
 	if loginNoBrowser {
-		_, err := p.line("   Press Enter when done.")
+		_, err := p.line(s.prompt("   Press Enter when done."))
 		return err
 	}
-	open, err := p.confirm("   Open this now?", true)
+	open, err := p.confirm(s.prompt("   Open this now?"), true)
 	if err != nil {
 		return err
 	}
 	if open {
 		if e := openFn(url); e != nil {
-			fmt.Fprintf(out, "   (couldn't open a browser: %v — open the URL above manually)\n", e)
+			fmt.Fprintf(out, "   %s\n", s.warning(fmt.Sprintf("(couldn't open a browser: %v — open the URL above manually)", e)))
 		}
 	}
-	_, err = p.line("   Press Enter when done.")
+	_, err = p.line(s.prompt("   Press Enter when done."))
 	return err
 }
 
@@ -162,33 +163,35 @@ func offerToOpen(p prompter, out io.Writer, instruction, url string, openFn func
 // launched. Declining leaves the URL on screen; the loopback server waits for
 // the callback either way.
 func confirmBrowserOpen(p prompter, out io.Writer, port int, openFn func(string) error) func(string) error {
+	s := newStyles(out)
 	return func(u string) error {
-		fmt.Fprintf(out, "   Sign in to Google to authorize rollout.\n   → %s\n", u)
+		fmt.Fprintf(out, "   Sign in to Google to authorize rollout.\n   %s\n", s.arrow(u))
 		if !loginNoBrowser {
-			open, err := p.confirm("   Open this now?", true)
+			open, err := p.confirm(s.prompt("   Open this now?"), true)
 			if err != nil {
 				return err
 			}
 			if open {
 				if e := openFn(u); e != nil {
-					fmt.Fprintf(out, "   (couldn't open a browser: %v — open the URL above manually)\n", e)
+					fmt.Fprintf(out, "   %s\n", s.warning(fmt.Sprintf("(couldn't open a browser: %v — open the URL above manually)", e)))
 				}
 			}
 		}
-		fmt.Fprintf(out, "   Waiting for callback on %s …\n", loopbackRedirectURL(port))
+		fmt.Fprintf(out, "   %s\n", s.muted(fmt.Sprintf("Waiting for callback on %s …", loopbackRedirectURL(port))))
 		return nil
 	}
 }
 
 // runLoginWizard is the interactive `rollout login play`.
 func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *PlayConfig, target string, openFn func(string) error, port int) error {
-	fmt.Fprintln(out, "=== Google Play sign-in ===")
-	fmt.Fprintln(out, "rollout can authenticate two ways. A service-account key is what Google")
-	fmt.Fprintln(out, "recommends and the only thing that works headlessly in CI; signing in as")
-	fmt.Fprintln(out, "yourself is quicker on a laptop.")
+	s := newStyles(out)
+	fmt.Fprintln(out, s.header("=== Google Play sign-in ==="))
+	fmt.Fprintln(out, s.muted("rollout can authenticate two ways. A service-account key is what Google"))
+	fmt.Fprintln(out, s.muted("recommends and the only thing that works headlessly in CI; signing in as"))
+	fmt.Fprintln(out, s.muted("yourself is quicker on a laptop."))
 	fmt.Fprintln(out)
 
-	useServiceAccount, err := p.confirm("Use a service-account JSON key?", true)
+	useServiceAccount, err := p.confirm(s.prompt("Use a service-account JSON key?"), true)
 	if err != nil {
 		return err
 	}
@@ -210,8 +213,9 @@ func runLoginWizard(ctx context.Context, out io.Writer, p prompter, cfg *PlayCon
 // wizardServiceAccount collects and validates a key file, re-prompting on a bad
 // path rather than making the user restart the wizard.
 func wizardServiceAccount(_ context.Context, out io.Writer, p prompter, cfg *PlayConfig, target string, openFn func(string) error) error {
+	s := newStyles(out)
 	if cfg.ServiceAccountFile != "" {
-		keep, err := p.confirm(fmt.Sprintf("Found a service-account key (%s). Keep it?", cfg.ServiceAccountFile), true)
+		keep, err := p.confirm(s.prompt(fmt.Sprintf("Found a service-account key (%s). Keep it?", cfg.ServiceAccountFile)), true)
 		if err != nil {
 			return err
 		}
@@ -219,24 +223,24 @@ func wizardServiceAccount(_ context.Context, out io.Writer, p prompter, cfg *Pla
 			if _, err := cfg.readServiceAccountKey(); err == nil {
 				return nil
 			}
-			fmt.Fprintln(out, "   That key is no longer readable; let's pick another.")
+			fmt.Fprintf(out, "   %s\n", s.warning("That key is no longer readable; let's pick another."))
 		}
 	}
 
-	fmt.Fprintln(out, "\n1. Enable the two APIs rollout uses in your Cloud project.")
+	fmt.Fprintf(out, "\n%s %s\n", s.bullet(1), s.header("Enable the two APIs rollout uses in your Cloud project."))
 	if err := offerToOpen(p, out, "Google Play Android Developer API", urlPublisherAPI, openFn); err != nil {
 		return err
 	}
 	if err := offerToOpen(p, out, "Google Play Developer Reporting API (vitals)", urlReportingAPI, openFn); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "\n2. Create a service account and download a JSON key.")
+	fmt.Fprintf(out, "\n%s %s\n", s.bullet(2), s.header("Create a service account and download a JSON key."))
 	if err := offerToOpen(p, out, "Cloud Console → Credentials", urlCredentials, openFn); err != nil {
 		return err
 	}
 
 	for {
-		path, err := p.line("\n   Path to the service-account JSON key: ")
+		path, err := p.line("\n" + s.prompt("   Path to the service-account JSON key: "))
 		if err != nil {
 			return err
 		}
@@ -244,7 +248,7 @@ func wizardServiceAccount(_ context.Context, out io.Writer, p prompter, cfg *Pla
 		cfg.serviceAccountJSON = ""
 		key, err := cfg.readServiceAccountKey()
 		if err != nil {
-			fmt.Fprintf(out, "   %v\n", err)
+			fmt.Fprintf(out, "   %s\n", s.failure(err.Error()))
 			continue
 		}
 		if err := saveServiceAccountPath(target, cfg.ServiceAccountFile); err != nil {
@@ -252,10 +256,10 @@ func wizardServiceAccount(_ context.Context, out io.Writer, p prompter, cfg *Pla
 		}
 		// The OAuth client, if any, is now unused: the service-account key wins.
 		cfg.ClientID, cfg.ClientSecret = "", ""
-		fmt.Fprintf(out, "   ✓ %s\n", key.ClientEmail)
+		fmt.Fprintf(out, "   %s %s\n", s.markOK(), s.accent(key.ClientEmail))
 
-		fmt.Fprintln(out, "\n3. Grant that service account access to your app.")
-		fmt.Fprintf(out, "   Invite %s and give it \"Release to production, exclude devices, and use\n   Play App Signing\" plus \"View app information\" for vitals.\n", key.ClientEmail)
+		fmt.Fprintf(out, "\n%s %s\n", s.bullet(3), s.header("Grant that service account access to your app."))
+		fmt.Fprintf(out, "   Invite %s and give it \"Release to production, exclude devices, and use\n   Play App Signing\" plus \"View app information\" for vitals.\n", s.accent(key.ClientEmail))
 		return offerToOpen(p, out, "Play Console → Users & permissions", urlPlayUsers, openFn)
 	}
 }
@@ -266,7 +270,8 @@ func wizardOAuth(ctx context.Context, out io.Writer, p prompter, cfg *PlayConfig
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "\n   Authorizing…")
+	s := newStyles(out)
+	fmt.Fprintf(out, "\n   %s\n", s.muted("Authorizing…"))
 	refreshToken, err := signInLoopback(ctx, cfg, creds, confirmBrowserOpen(p, out, port, openFn), port)
 	if err != nil {
 		return err
@@ -277,15 +282,16 @@ func wizardOAuth(ctx context.Context, out io.Writer, p prompter, cfg *PlayConfig
 	cfg.ClientID, cfg.ClientSecret = creds.clientID, creds.clientSecret
 	// A key configured earlier would win over the sign-in that just happened.
 	cfg.ServiceAccountFile, cfg.serviceAccountJSON = "", ""
-	fmt.Fprintf(out, "   ✓ Signed in. Credentials written to %s\n", target)
+	fmt.Fprintf(out, "   %s Signed in. Credentials written to %s\n", s.markOK(), s.accent(target))
 	return nil
 }
 
 // wizardGatherClient resolves the OAuth client: reuse the configured one, read
 // a downloaded Desktop-app JSON, or take an id/secret pair by hand.
 func wizardGatherClient(p prompter, out io.Writer, cfg *PlayConfig, openFn func(string) error) (clientCreds, error) {
+	s := newStyles(out)
 	if cfg.ClientID != "" && cfg.ClientSecret != "" {
-		keep, err := p.confirm(fmt.Sprintf("   Found an OAuth client (%s). Keep it?", secretHint(cfg.ClientID)), true)
+		keep, err := p.confirm(s.prompt(fmt.Sprintf("   Found an OAuth client (%s). Keep it?", secretHint(cfg.ClientID))), true)
 		if err != nil {
 			return clientCreds{}, err
 		}
@@ -294,54 +300,54 @@ func wizardGatherClient(p prompter, out io.Writer, cfg *PlayConfig, openFn func(
 		}
 	}
 
-	fmt.Fprintln(out, "\n1. Enable the two APIs rollout uses in your Cloud project.")
+	fmt.Fprintf(out, "\n%s %s\n", s.bullet(1), s.header("Enable the two APIs rollout uses in your Cloud project."))
 	if err := offerToOpen(p, out, "Google Play Android Developer API", urlPublisherAPI, openFn); err != nil {
 		return clientCreds{}, err
 	}
 	if err := offerToOpen(p, out, "Google Play Developer Reporting API (vitals)", urlReportingAPI, openFn); err != nil {
 		return clientCreds{}, err
 	}
-	fmt.Fprintln(out, "\n2. Create an OAuth 2.0 Client ID of type \"Desktop app\" and download its JSON.")
+	fmt.Fprintf(out, "\n%s %s\n", s.bullet(2), s.header("Create an OAuth 2.0 Client ID of type \"Desktop app\" and download its JSON."))
 	if err := offerToOpen(p, out, "Cloud Console → Credentials", urlCredentials, openFn); err != nil {
 		return clientCreds{}, err
 	}
 
 	for {
-		path, err := p.line("\n   Path to the downloaded client JSON (or press Enter to type the id/secret): ")
+		path, err := p.line("\n" + s.prompt("   Path to the downloaded client JSON (or press Enter to type the id/secret): "))
 		if err != nil {
 			return clientCreds{}, err
 		}
 		if path == "" {
-			id, err := p.line("   Client ID: ")
+			id, err := p.line(s.prompt("   Client ID: "))
 			if err != nil {
 				return clientCreds{}, err
 			}
-			secret, err := p.secret("   Client secret: ")
+			secret, err := p.secret(s.prompt("   Client secret: "))
 			if err != nil {
 				return clientCreds{}, err
 			}
 			if id == "" || secret == "" {
-				fmt.Fprintln(out, "   Both halves are needed.")
+				fmt.Fprintf(out, "   %s\n", s.failure("Both halves are needed."))
 				continue
 			}
 			return clientCreds{clientID: id, clientSecret: secret, kind: "config"}, nil
 		}
 		data, err := os.ReadFile(expandHome(path))
 		if err != nil {
-			fmt.Fprintf(out, "   %v\n", err)
+			fmt.Fprintf(out, "   %s\n", s.failure(err.Error()))
 			continue
 		}
 		creds, err := parseCredentialsJSON(data)
 		if err != nil {
-			fmt.Fprintf(out, "   %v\n", err)
+			fmt.Fprintf(out, "   %s\n", s.failure(err.Error()))
 			continue
 		}
 		if creds.clientID == "" || creds.clientSecret == "" {
-			fmt.Fprintln(out, "   That file has no client_id/client_secret.")
+			fmt.Fprintf(out, "   %s\n", s.failure("That file has no client_id/client_secret."))
 			continue
 		}
 		if creds.kind == "web" {
-			fmt.Fprintln(out, "   Warning: this is a Web-application client; loopback sign-in expects a Desktop app. Trying anyway.")
+			fmt.Fprintf(out, "   %s\n", s.warning("Warning: this is a Web-application client; loopback sign-in expects a Desktop app. Trying anyway."))
 		}
 		return creds, nil
 	}
@@ -350,11 +356,12 @@ func wizardGatherClient(p prompter, out io.Writer, cfg *PlayConfig, openFn func(
 // wizardPackageName offers to persist a default app, so every later command can
 // omit --package.
 func wizardPackageName(out io.Writer, p prompter, cfg *PlayConfig, target string) error {
+	s := newStyles(out)
 	if cfg.PackageName != "" {
-		fmt.Fprintf(out, "\nDefault app: %s\n", cfg.PackageName)
+		fmt.Fprintf(out, "\n%s %s\n", s.label("Default app:"), s.accent(cfg.PackageName))
 		return nil
 	}
-	pkg, err := p.line("\nDefault app package name (e.g. com.example.app, or Enter to skip): ")
+	pkg, err := p.line("\n" + s.prompt("Default app package name (e.g. com.example.app, or Enter to skip): "))
 	if err != nil {
 		return err
 	}
@@ -362,13 +369,13 @@ func wizardPackageName(out io.Writer, p prompter, cfg *PlayConfig, target string
 		return nil
 	}
 	if !validPackageName(pkg) {
-		fmt.Fprintf(out, "   %q is not a package name — skipping. Set it later with `rollout config play set-package`.\n", pkg)
+		fmt.Fprintf(out, "   %s\n", s.warning(fmt.Sprintf("%q is not a package name — skipping. Set it later with `rollout config play set-package`.", pkg)))
 		return nil
 	}
 	if err := upsertConfigKey(target, playConfigTable, "package_name", pkg); err != nil {
 		return err
 	}
 	cfg.PackageName = pkg
-	fmt.Fprintf(out, "   ✓ Default app set to %s\n", pkg)
+	fmt.Fprintf(out, "   %s Default app set to %s\n", s.markOK(), s.accent(pkg))
 	return nil
 }

@@ -112,7 +112,7 @@ func TestPrintResultRejectsRowlessTable(t *testing.T) {
 }
 
 func TestFormatTableEmpty(t *testing.T) {
-	if got := formatTable(nil, []string{"track"}); !strings.Contains(got, "No results found") {
+	if got := formatTable(styles{}, nil, []string{"track"}); !strings.Contains(got, "No results found") {
 		t.Errorf("empty table should say so, got %q", got)
 	}
 }

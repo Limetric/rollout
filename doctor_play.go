@@ -14,17 +14,23 @@ func playDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult, e
 	if err != nil {
 		return liveUnconfigured, err
 	}
+	s := newStyles(out)
 	store := describeTokenStore(playTokenPolicy.Platform)
-	fmt.Fprintf(out, "credential mode:    %s\n", playCredentialModeSummary(cfg))
-	fmt.Fprintf(out, "service account:    %s\n", playServiceAccountSummary(cfg))
-	fmt.Fprintf(out, "token store:        %s\n", store.location())
-	fmt.Fprintf(out, "saved sign-in:      %s\n", store.describe(playTokenPolicy))
-	fmt.Fprintf(out, "package name:       %s\n", orNone(cfg.PackageName))
-	fmt.Fprintf(out, "developer id:       %s\n", orNone(cfg.DeveloperID))
-	fmt.Fprintf(out, "reports bucket:     %s\n", orNone(cfg.ReportsBucket))
-	fmt.Fprintf(out, "api base url:       %s\n", cfg.BaseURL)
-	fmt.Fprintf(out, "reporting base url: %s\n", cfg.ReportingBaseURL)
-	fmt.Fprintf(out, "scopes:             %s\n", strings.Join(cfg.scopes(), ", "))
+	settings := []struct{ label, value string }{
+		{"credential mode:   ", playCredentialModeSummary(cfg)},
+		{"service account:   ", playServiceAccountSummary(cfg)},
+		{"token store:       ", store.location()},
+		{"saved sign-in:     ", store.describe(playTokenPolicy)},
+		{"package name:      ", orNone(cfg.PackageName)},
+		{"developer id:      ", orNone(cfg.DeveloperID)},
+		{"reports bucket:    ", orNone(cfg.ReportsBucket)},
+		{"api base url:      ", cfg.BaseURL},
+		{"reporting base url:", cfg.ReportingBaseURL},
+		{"scopes:            ", strings.Join(cfg.scopes(), ", ")},
+	}
+	for _, set := range settings {
+		fmt.Fprintf(out, "%s %s\n", s.label(set.label), s.value(set.value))
+	}
 
 	if err := cfg.validate(); err != nil {
 		return liveUnconfigured, err
@@ -62,9 +68,10 @@ func playDoctor(ctx context.Context, out io.Writer, offline bool) (liveResult, e
 // this specific app. A token that mints fine can still belong to a service
 // account nobody invited.
 func runPlayDoctorLive(ctx context.Context, out io.Writer, cfg *PlayConfig) (liveResult, error) {
+	s := newStyles(out)
 	pkg, err := cfg.resolvePackage("")
 	if err != nil {
-		fmt.Fprintf(out, "edit probe:          skipped (%v)\n", err)
+		fmt.Fprintf(out, "%s %s\n", s.label("edit probe:         "), s.warning(fmt.Sprintf("skipped (%v)", err)))
 		// Credentials resolve and nothing was rejected; there is simply no app
 		// to probe. Reporting that as broken would be wrong.
 		return liveOffline, nil
@@ -81,7 +88,7 @@ func runPlayDoctorLive(ctx context.Context, out io.Writer, cfg *PlayConfig) (liv
 	if err != nil {
 		return reportProbe(out, "edit probe:         ", err), err
 	}
-	fmt.Fprintf(out, "edit probe:          ✓ opened and deleted edit %s on %s\n", editID, pkg)
+	fmt.Fprintf(out, "%s %s opened and deleted edit %s on %s\n", s.label("edit probe:         "), s.markOK(), editID, s.accent(pkg))
 	return liveOK, nil
 }
 

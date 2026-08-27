@@ -127,6 +127,13 @@ rollout play errors --days 7 --format table
 rollout play vitals --metric crashrate --dimension versionCode | jq '.rows'
 ```
 
+Human-facing output — `login`, `doctor`, `config show`, table headers, write
+previews — is colored when it is going to a terminal. Redirect it or pipe it
+anywhere else and the color disappears on its own, so `--format json`,
+`--format csv`, and `rollout audit` stay byte-identical for scripts. Override
+the detection with `--color always|never|auto`; `NO_COLOR` and `TERM=dumb` are
+honored.
+
 ## Safety
 
 No mutating call executes on first request. A write tool returns a preview and a
