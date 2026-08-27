@@ -221,6 +221,27 @@ func (c *PlayConfig) resolvePackage(arg string) (string, error) {
 	return "", fmt.Errorf("no package name — pass --package com.example.app, set PLAY_PACKAGE_NAME, or run `rollout config play set-package com.example.app`")
 }
 
+// resolveDeveloperID picks the developer account a users-and-permissions
+// command acts on: an explicit argument first, then the configured value.
+//
+// It is resolved on demand rather than required by validate(), because it is
+// the one setting nothing else needs — every other surface is addressed by
+// package name, and a user who only ships releases should never be asked for a
+// developer ID they would have to go and look up.
+func (c *PlayConfig) resolveDeveloperID(arg string) (string, error) {
+	id := strings.TrimSpace(arg)
+	if id == "" {
+		id = c.DeveloperID
+	}
+	if id == "" {
+		return "", fmt.Errorf("no developer account id — it is the number in the Play Console URL (…/developers/1234567890/…); pass --developer-id, set PLAY_DEVELOPER_ID, or run `rollout config play set-developer-id 1234567890`")
+	}
+	if !validDeveloperID(id) {
+		return "", fmt.Errorf("developer id %q is not the all-digit id from the Play Console URL (…/developers/1234567890/…)", id)
+	}
+	return id, nil
+}
+
 // isTest reports whether we're pointed at a local/offline base URL, in which
 // case auth and credential checks are relaxed.
 func (c *PlayConfig) isTest() bool {

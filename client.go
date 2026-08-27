@@ -73,6 +73,12 @@ func (c *Client) resolvePackage(explicit string) (string, error) {
 	return c.cfg.resolvePackage(explicit)
 }
 
+// resolveDeveloperID returns the developer account the users and grants tools
+// act on. Only they need it: everything else is addressed by package name.
+func (c *Client) resolveDeveloperID(explicit string) (string, error) {
+	return c.cfg.resolveDeveloperID(explicit)
+}
+
 // --- request plumbing ---
 
 // retryMaxAttempts bounds how many times a transient failure is retried.
