@@ -72,9 +72,9 @@ Re-running the original command with `--confirm <token>` works too. Tokens last
 
 **Destructive operations return a second token that must be confirmed once
 more**: halting a rollout, completing a production rollout, deleting a store
-listing, deleting a whole image type, and deactivating a subscription base
-plan. That is deliberate — surface it to the user rather than confirming twice
-on your own initiative.
+listing, deleting a whole image type, deactivating a subscription base plan,
+revoking a grant, and removing a user. That is deliberate — surface it to the
+user rather than confirming twice on your own initiative.
 
 Never skip the preview, never guess a token, and never confirm a write the user
 has not approved. `rollout audit` lists every write that has been applied.
@@ -169,22 +169,63 @@ A reply is **public and immediate** — it is not staged in an edit like a
 release. The preview quotes the review being answered; check it is the right one
 before confirming. Replies are capped at 350 characters.
 
+## Users and permissions
+
+These act on the developer **account**, not on an app, so they need its numeric
+id from the Play Console URL — `--developer-id`, `PLAY_DEVELOPER_ID`, or
+`rollout config play set-developer-id`. If it is not configured, ask; never
+guess it.
+
+```bash
+rollout play users --format table
+rollout play user invite --email dev@example.com --apps com.example.app --app-permissions CAN_MANAGE_TRACK_APKS
+rollout play user grant --email dev@example.com --package com.example.app --permissions CAN_MANAGE_TRACK_APKS
+rollout play user revoke --email dev@example.com --package com.example.app
+rollout play user remove --email dev@example.com
+```
+
+Play has two permission vocabularies that differ only by a `_GLOBAL` suffix:
+account-wide ones go to `--permissions` on `user invite`, per-app ones to
+`--app-permissions` there and to `--permissions` on `user grant`. Read the
+preview: it lists the exact enums, and `user grant` **replaces** a user's
+permissions on that app rather than adding to them.
+
+`user revoke` and `user remove` take **two confirmations** — the API cannot say
+afterwards what a removed grant held, so the preview is the only record. Copy it
+somewhere before confirming.
+
+## App-level utilities
+
+```bash
+rollout play internal-share --file app.aab       # install link, no track, no release
+rollout play device-tiers create --file tiers.json
+rollout play data-safety set --file data-safety.csv
+```
+
+`internal-share` hands back a link that installs the build — it ships to no
+track, but the Publisher API cannot withdraw the link afterwards.
+`data-safety set` has **no read counterpart**: Play offers no endpoint for the
+current declaration, so it cannot be shown, diffed, or restored. Do not run it
+unless the user has the CSV they mean to publish.
+
 ## Command reference
 
 Every command below is `rollout play <command>`; the shared ones (`confirm`,
 `audit`, `doctor`, `config`) are `rollout <command>`.
 
 **Reads**: `apps`, `tracks`, `releases`, `artifacts`, `listing`, `images`,
-`details`, `testers`, `countries`, `device-tiers`, `edit status`, `products`,
-`subscriptions`, `subscription get`, `reviews`, `review get`, `vitals`,
-`vitals summary`, `errors`, `error reports`, `anomalies`.
+`details`, `testers`, `countries`, `device-tiers`, `users`, `edit status`,
+`products`, `subscriptions`, `subscription get`, `reviews`, `review get`,
+`vitals`, `vitals summary`, `errors`, `error reports`, `anomalies`.
 
 **Writes** (preview then confirm): `upload`, `release create`, `release update`,
 `release halt`, `release resume`, `release complete`, `promote`, `testers set`,
 `countries set`, `deobfuscation upload`, `listing set`, `listing delete`,
 `listing sync`, `images upload`, `images delete`, `details set`,
 `product set`, `subscription base-plan set-state`,
-`subscription offer set-state`, `review reply`.
+`subscription offer set-state`, `review reply`, `internal-share`,
+`device-tiers create`, `data-safety set`, `user invite`, `user grant`,
+`user revoke`, `user remove`.
 
 Run `rollout play <command> --help` for the flags. Full documentation is in the
 repository's `docs/play.md`.

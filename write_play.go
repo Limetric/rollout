@@ -46,6 +46,10 @@ const (
 	// dispatchEdit because an image upload is a resumable transfer rather than
 	// a JSON body.
 	dispatchImages = "images"
+	// dispatchInternalShare uploads an artifact to internal app sharing. It has
+	// no edit at all: the artifact is not published, it is handed back as a
+	// download link, so wrapping it in an edit would commit an empty one.
+	dispatchInternalShare = "internal_share"
 	// dispatchListingSync applies a whole reconciliation plan — text, uploads,
 	// and deletions across every locale — inside one edit, so a failure on any
 	// locale commits nothing.
@@ -61,8 +65,9 @@ type editRequest struct {
 	// Query carries the call's query parameters. Some of the non-edit
 	// resources put real behaviour there rather than in the body —
 	// `autoConvertMissingPrices` on an in-app product decides whether the
-	// regions you did not price get one at all — so it has to survive staging
-	// alongside the body.
+	// regions you did not price get one at all, and a grant patch without its
+	// `updateMask` clears the fields it did not mention — so it has to survive
+	// staging alongside the body.
 	Query map[string]string `json:"query,omitempty"`
 	// Describe names what this call does, for the error message when it is the
 	// one that fails. A multi-locale listing sync that fails must say which
@@ -213,10 +218,14 @@ func previewPlayWrite(req stagePlayWriteRequest) (WriteResult, error) {
 // someone their price change will be validated first — when it will not — is
 // exactly the wrong thing to say in the sentence they read before confirming.
 func playApplyNote(dispatch string) string {
-	if dispatch == dispatchDirect {
+	switch dispatch {
+	case dispatchDirect:
 		return "This resource is not edit-scoped: confirming sends the change straight to Play, where it takes effect immediately."
+	case dispatchInternalShare:
+		return "Internal sharing is not edit-scoped: confirming uploads the artifact straight to Play and returns a link that installs it, which this API cannot withdraw."
+	default:
+		return "Confirming opens a fresh edit, validates it, and commits."
 	}
-	return "Confirming opens a fresh edit, validates it, and commits."
 }
 
 // applyMutation makes *Client a mutationApplier: it executes a consumed pending
@@ -240,6 +249,8 @@ func (c *Client) applyMutation(ctx context.Context, p *PendingMutation) (*applyO
 		return c.applyDeobfuscationUpload(ctx, p)
 	case dispatchImages:
 		return c.applyImageUploads(ctx, p)
+	case dispatchInternalShare:
+		return c.applyInternalShare(ctx, p)
 	case dispatchListingSync:
 		return c.applyListingSync(ctx, p)
 	default:
@@ -509,6 +520,7 @@ func (c *Client) applyDirectWrite(ctx context.Context, p *PendingMutation) (*app
 	}
 
 	var results []json.RawMessage
+	var applied []string
 	for _, req := range payload.Requests {
 		var out json.RawMessage
 		var body any
@@ -516,16 +528,34 @@ func (c *Client) applyDirectWrite(ctx context.Context, p *PendingMutation) (*app
 			body = req.Body
 		}
 		if err := c.doWrite(ctx, req.Method, req.Path, req.values(), body, &out); err != nil {
-			if req.Describe != "" {
-				return nil, fmt.Errorf("%s: %w", req.Describe, err)
-			}
-			return nil, err
+			return nil, describeDirectFailure(req, applied, err)
 		}
 		if len(out) > 0 {
 			results = append(results, out)
 		}
+		if req.Describe != "" {
+			applied = append(applied, req.Describe)
+		}
 	}
 	return &applyOutcome{Detail: p.Summary, Results: results}, nil
+}
+
+// describeDirectFailure names the step that failed and, when earlier steps
+// already landed, what they were.
+//
+// A direct write is not edit-scoped, so there is no transaction to abort: an
+// invitation followed by three grants that fails on the second grant has really
+// created the user. Saying so is the difference between a user re-running a
+// command that now fails on a duplicate and one who knows to fix only what is
+// left.
+func describeDirectFailure(req editRequest, applied []string, err error) error {
+	if req.Describe != "" {
+		err = fmt.Errorf("%s: %w", req.Describe, err)
+	}
+	if len(applied) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w — already applied and not rolled back: %s", err, strings.Join(applied, ", "))
 }
 
 // applyUpload uploads an artifact and, unless the write asked for upload-only,
@@ -622,6 +652,54 @@ func (c *Client) applyDeobfuscationUpload(ctx context.Context, p *PendingMutatio
 		return &applyOutcome{EditID: editID}, err
 	}
 	return &applyOutcome{EditID: editID, Detail: p.Summary, Results: []json.RawMessage{uploaded}}, nil
+}
+
+// internalSharePayload is the staged intent for an internal app sharing
+// upload.
+type internalSharePayload struct {
+	FilePath    string `json:"file_path"`
+	ContentType string `json:"content_type"`
+	SHA256      string `json:"sha256"`
+	// Kind is "bundle" or "apk"; they have separate endpoints.
+	Kind string `json:"kind"`
+}
+
+// applyInternalShare uploads an artifact to internal app sharing and returns
+// the link it can be installed from.
+//
+// No edit is involved. An internal-sharing artifact is not published to a
+// track, is not reviewed, and does not appear in the app's release history —
+// Play just stores it and hands back a URL, so an edit would be an empty
+// transaction wrapped around an upload.
+func (c *Client) applyInternalShare(ctx context.Context, p *PendingMutation) (*applyOutcome, error) {
+	var payload internalSharePayload
+	if err := json.Unmarshal(p.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("corrupt staged payload for %s: %w", p.Tool, err)
+	}
+	if err := verifyStagedFile(payload.FilePath, payload.SHA256); err != nil {
+		return nil, err
+	}
+
+	var artifact struct {
+		CertificateFingerprint string `json:"certificateFingerprint"`
+		SHA256                 string `json:"sha256"`
+		DownloadURL            string `json:"downloadUrl"`
+	}
+	path := fmt.Sprintf("applications/internalappsharing/%s/artifacts/%s", p.PackageName, payload.Kind)
+	if err := c.uploadMedia(ctx, path, payload.ContentType, payload.FilePath, nil, &artifact, nil); err != nil {
+		return nil, fmt.Errorf("upload %s for internal sharing: %w", payload.FilePath, err)
+	}
+	if artifact.DownloadURL == "" {
+		// The URL is the entire product of this call — without it the upload
+		// happened but nobody can install what was uploaded, and reporting
+		// success would hide that.
+		return nil, fmt.Errorf("upload %s for internal sharing: the API returned no download URL", payload.FilePath)
+	}
+
+	return &applyOutcome{
+		Detail:  p.Summary + "\nInstall link (anyone with access to the app in Play Console can use it): " + artifact.DownloadURL,
+		Results: []json.RawMessage{jsonRow(artifact)},
+	}, nil
 }
 
 // verifyStagedFile refuses to upload a file that changed after it was

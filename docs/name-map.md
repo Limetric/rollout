@@ -46,6 +46,7 @@ it shares a handler with (`Annotations: mcpTool("halt_release")`), and
 | `rollout play testers` | `play_testers` |
 | `rollout play countries` | `play_countries` |
 | `rollout play device-tiers` | `play_device_tiers` |
+| `rollout play users` | `play_users` |
 | `rollout play edit status` | `play_edit_status` |
 
 ## Release management
@@ -90,6 +91,27 @@ than reorder words. On the CLI `activate` and `deactivate` would read as two
 verbs; over MCP they are one operation with two values, and a tool is registered
 once under one name. So the state is an argument — `--state active|inactive` —
 rather than two commands that would both claim `play_set_base_plan_state`.
+
+## App-level utilities
+
+| CLI | MCP |
+| --- | --- |
+| `rollout play internal-share` | `play_internal_share` |
+| `rollout play device-tiers create` | `play_create_device_tier_config` |
+| `rollout play data-safety set` | `play_update_data_safety` |
+
+## Users and permissions
+
+These act on the developer account rather than on one app, so they resolve a
+developer account id (`--developer-id`, `PLAY_DEVELOPER_ID`, or
+`rollout config play set-developer-id`) instead of a package name.
+
+| CLI | MCP |
+| --- | --- |
+| `rollout play user invite` | `play_invite_user` |
+| `rollout play user grant` | `play_set_grant` |
+| `rollout play user revoke` | `play_revoke_grant` |
+| `rollout play user remove` | `play_remove_user` |
 
 ## Reviews
 

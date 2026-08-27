@@ -37,6 +37,7 @@ var playPlatform = registerPlatform(&Platform{
 		testersCmd,
 		countriesCmd,
 		deviceTiersCmd,
+		usersCmd,
 		editCmd,
 
 		// Monetization.
@@ -50,6 +51,13 @@ var playPlatform = registerPlatform(&Platform{
 		releaseCmd,
 		promoteCmd,
 		deobfuscationCmd,
+
+		// App-level utilities.
+		internalShareCmd,
+		dataSafetyCmd,
+
+		// Developer account users and permissions.
+		userCmd,
 
 		// Reviews.
 		reviewsCmd,

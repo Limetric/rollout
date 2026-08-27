@@ -68,6 +68,10 @@ func registerPlayTools(ctx context.Context, reg *toolRegistrar) error {
 		"List the app's device tier configurations (the RAM and device-feature tiers used for targeted delivery).",
 		runDeviceTiers)
 
+	addTool(reg, client, "users",
+		"List the users on the Play Console developer account: their access state, when their access expires, the account-wide permissions they hold, and their per-app grants. Needs the developer account id (the number in the Console URL).",
+		runUsers)
+
 	addTool(reg, client, "edit_status",
 		"Check whether these credentials can actually publish to this app, by opening and immediately discarding an edit. Call this before staging a write: a credential that authenticates fine can still lack access to a given app.",
 		runEditStatus)
@@ -165,6 +169,38 @@ func registerPlayTools(ctx context.Context, reg *toolRegistrar) error {
 	addTool(reg, client, "sync_listing",
 		"Reconcile a local metadata directory (the fastlane supply layout) with the store: per-locale text and, with images enabled, screenshots and graphics compared by SHA-256 so unchanged files are never re-uploaded. The whole plan is previewed and then applied in one edit — if any locale fails, none of it lands.",
 		runSyncListing)
+
+	// --- app-level utilities ---
+
+	addTool(reg, client, "internal_share",
+		"Upload an .aab or .apk to internal app sharing and get a link it can be installed from. It joins no track, ships to nobody, and is never reviewed — but the link is real, and the Publisher API cannot withdraw it, so this previews first.",
+		runInternalShare)
+
+	addTool(reg, client, "create_device_tier_config",
+		"Create a device tier configuration from a JSON file holding a DeviceTierConfig — the RAM and device-feature tiers targeted delivery selects on. Configurations are append-only: this never edits an existing one. Previews first and returns a confirm token.",
+		runCreateDeviceTierConfig)
+
+	addTool(reg, client, "update_data_safety",
+		"Replace the app's Data safety declaration with the CSV exported from Play Console. Play offers no read for this form, so what is live cannot be shown or restored — the preview says so before the token is handed out.",
+		runUpdateDataSafety)
+
+	// --- developer account users and permissions ---
+
+	addTool(reg, client, "invite_user",
+		"Invite someone to the developer account, optionally granting them access to named apps in the same call. The preview spells out every permission enum it would send, because these are the arguments nobody can check by reading them back.",
+		runInviteUser)
+
+	addTool(reg, client, "set_grant",
+		"Set what one user may do with one app. This replaces their permissions on that app rather than adding to them, so the preview diffs the current list against the new one.",
+		runSetGrant)
+
+	addTool(reg, client, "revoke_grant",
+		"Take away one user's access to one app. Destructive: takes two confirmations, and the API cannot say afterwards what the grant held — the preview names it. Their account-wide permissions are untouched.",
+		runRevokeGrant)
+
+	addTool(reg, client, "remove_user",
+		"Remove a user from the developer account, dropping every grant they hold at once. Destructive: takes two confirmations, and the preview is the only record of what they could do.",
+		runRemoveUser)
 
 	// --- reviews ---
 

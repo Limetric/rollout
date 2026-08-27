@@ -108,6 +108,22 @@ rollout config play set-package com.example.app
 Every tool then takes `--package` optionally. `rollout play apps` lists what
 your credential can reach, with the default first.
 
+## Set the developer account id (users and permissions only)
+
+```bash
+rollout config play set-developer-id 1234567890
+```
+
+The users and permissions tools act on the developer *account*, not on an app,
+so they need its numeric id — the one in the Play Console URL,
+`play.google.com/console/developers/1234567890/…`. Nothing else needs it, which
+is why it is asked for on demand rather than at setup; `--developer-id` and
+`PLAY_DEVELOPER_ID` override the stored value.
+
+The credential also needs the account-level *Manage users and permissions*
+right. A service account that publishes perfectly is refused here, and the 403
+says only that permission is missing.
+
 ## Everyday commands
 
 ```bash
@@ -164,6 +180,7 @@ Reads:
 | `play_testers` | Google Groups testing a track |
 | `play_countries` | Where a track is available |
 | `play_device_tiers` | Device tier configurations |
+| `play_users` | Developer account users, their access state and per-app grants |
 | `play_edit_status` | Cheap "can I publish to this app?" probe |
 
 Release management (all preview first):
@@ -202,6 +219,23 @@ Monetization:
 | `play_update_product` | Create or update a managed product (previews per-region price deltas) |
 | `play_set_base_plan_state` | Activate or deactivate a base plan (two confirmations to deactivate) |
 | `play_set_offer_state` | Activate or deactivate a subscription offer |
+
+App-level utilities (all preview first):
+
+| Tool | What it does |
+| --- | --- |
+| `play_internal_share` | Upload a build to internal app sharing and get its install link |
+| `play_create_device_tier_config` | Create a device tier configuration from a JSON file |
+| `play_update_data_safety` | Replace the Data safety declaration from a Console CSV |
+
+Users and permissions (all preview first):
+
+| Tool | What it does |
+| --- | --- |
+| `play_invite_user` | Invite someone to the developer account, optionally with app grants |
+| `play_set_grant` | Set what one user may do with one app |
+| `play_revoke_grant` | Take a user's access to one app away (two confirmations) |
+| `play_remove_user` | Remove a user from the account entirely (two confirmations) |
 
 Reviews:
 
@@ -305,6 +339,63 @@ only to report that the API will not do it — worse than its absence, because a
 agent has to call it to find that out — so there isn't one.
 `rollout play subscriptions --show-archived` still surfaces subscriptions
 archived before Play withdrew the feature.
+
+## Users and permissions
+
+```bash
+rollout play users --format table                       # who is on the account
+rollout play user invite --email dev@example.com \
+  --apps com.example.app --app-permissions CAN_MANAGE_TRACK_APKS
+rollout play user grant --email dev@example.com \
+  --package com.example.app --permissions CAN_MANAGE_TRACK_APKS,CAN_VIEW_APP_QUALITY
+rollout play user revoke --email dev@example.com --package com.example.app
+rollout play user remove --email dev@example.com
+```
+
+Play has two permission vocabularies and they differ only by a suffix:
+
+| Where | Flag | Example |
+| --- | --- | --- |
+| The whole account | `--permissions` on `user invite` | `CAN_VIEW_APP_QUALITY_GLOBAL` |
+| One app | `--app-permissions` on `user invite`, `--permissions` on `user grant` | `CAN_VIEW_APP_QUALITY` |
+
+Passing one where the other belongs is caught before anything is staged, and the
+error names the flag that would have taken it. Every preview lists the exact
+enums it would send.
+
+Three things worth knowing:
+
+- **`user grant` replaces, it does not add.** The preview diffs the current
+  permissions against the new ones so a permission you did not retype is visible
+  before it disappears.
+- **`user revoke` and `user remove` take two confirmations**, because the API
+  cannot report afterwards what a removed grant held. The preview is the record.
+- **An invite with app grants is several API calls**, and Play has no
+  transaction across them. If one fails, the error names what already landed.
+
+## Internal app sharing, device tiers, and data safety
+
+```bash
+rollout play internal-share --file app.aab        # returns an install link
+rollout play device-tiers create --file tiers.json
+rollout play data-safety set --file data-safety.csv
+```
+
+`internal-share` uploads a build that joins no track and ships to nobody, and
+hands back a link anyone with access to the app in Play Console can install
+from. It still previews first: the Publisher API cannot withdraw the link once
+it exists.
+
+`device-tiers create` takes a `DeviceTierConfig` as JSON, because the tier
+grammar is a nested selector language that no flag set expresses well — run
+`rollout play device-tiers` to see the shape of an existing one. Configurations
+are append-only; creating one never edits another.
+
+`data-safety set` uploads the CSV exported from Play Console → App content →
+Data safety. Play offers **no read** for this form, so rollout cannot show what
+is live, diff against it, or put it back — keep the CSV that is currently
+published. That is also why no read tool for it exists here: a tool that could
+only answer "unsupported" is worse than its absence.
 
 ## Guard rails
 
