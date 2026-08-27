@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // testServiceAccountJSON is a syntactically complete key. It is never used to
@@ -18,20 +19,36 @@ const testServiceAccountJSON = `{"type":"service_account","project_id":"p","clie
 // verdict plus everything it printed.
 func playDoctorAgainst(t *testing.T, baseURL string, offline bool) (liveResult, string, error) {
 	t.Helper()
-	clearPlayEnv(t)
-	t.Setenv("PLAY_SERVICE_ACCOUNT_JSON", testServiceAccountJSON)
+	playDoctorEnv(t, baseURL)
 	t.Setenv("PLAY_PACKAGE_NAME", "com.example.app")
+
+	var out bytes.Buffer
+	res, err := playDoctor(context.Background(), &out, offline)
+	return res, out.String(), err
+}
+
+// playDoctorEnv points every credential and every endpoint at the test's own
+// fixtures. All three base URLs matter: doctor probes the Publisher API, the
+// Reporting API and Cloud Storage, and one left at its default would send an
+// offline unit test to the real Google.
+func playDoctorEnv(t *testing.T, baseURL string) {
+	t.Helper()
+	clearPlayEnv(t)
+	// A probe that gets a 5xx retries with backoff; at the real delay the
+	// inconclusive cases alone would dominate the package's test time.
+	originalDelay := retryBaseDelay
+	retryBaseDelay = time.Millisecond
+	t.Cleanup(func() { retryBaseDelay = originalDelay })
+	t.Setenv("PLAY_SERVICE_ACCOUNT_JSON", testServiceAccountJSON)
 	t.Setenv("PLAY_API_BASE_URL", baseURL)
+	t.Setenv("PLAY_REPORTING_BASE_URL", baseURL)
+	t.Setenv("PLAY_STORAGE_BASE_URL", baseURL)
 
 	// `rollout doctor` reads the global --config flag; keep it pointed at
 	// nothing so a real config file cannot leak in.
 	original := configPath
 	configPath = writeConfig(t, "")
 	t.Cleanup(func() { configPath = original })
-
-	var out bytes.Buffer
-	res, err := playDoctor(context.Background(), &out, offline)
-	return res, out.String(), err
 }
 
 func TestPlayDoctorVerdicts(t *testing.T) {
@@ -47,7 +64,7 @@ func TestPlayDoctorVerdicts(t *testing.T) {
 			status:     http.StatusOK,
 			body:       `{"id":"edit-1","expiryTimeSeconds":"1700000000"}`,
 			want:       liveOK,
-			wantOutput: []string{"edit probe", "edit-1", "com.example.app"},
+			wantOutput: []string{"publish probe", "edit-1", "com.example.app"},
 		},
 		{
 			// The single most common setup failure: the key works, but nobody
@@ -169,26 +186,229 @@ func TestPlayDoctorRejectsAnUnparseableKey(t *testing.T) {
 	}
 }
 
-// TestPlayDoctorWithoutAPackageDoesNotFail: credentials resolve and nothing was
-// rejected; there is simply no app to probe.
-func TestPlayDoctorWithoutAPackageDoesNotFail(t *testing.T) {
-	clearPlayEnv(t)
-	t.Setenv("PLAY_SERVICE_ACCOUNT_JSON", testServiceAccountJSON)
-	t.Setenv("PLAY_API_BASE_URL", "http://127.0.0.1:1")
-	original := configPath
-	configPath = writeConfig(t, "")
-	t.Cleanup(func() { configPath = original })
+// playFake serves the three services doctor probes, each with its own canned
+// response, so a test can make one surface healthy and another refuse — which
+// is the whole point of probing them separately.
+type playFake struct {
+	editStatus, appsStatus, objectsStatus int
+	editBody, appsBody, objectsBody       string
+	appsCalls, objectCalls                int
+}
 
-	var out bytes.Buffer
-	res, err := playDoctor(context.Background(), &out, false)
-	if err != nil {
-		t.Fatalf("doctor: %v\n%s", err, out.String())
+func (f *playFake) start(t *testing.T) string {
+	t.Helper()
+	status := func(code int) int {
+		if code == 0 {
+			return http.StatusOK
+		}
+		return code
 	}
-	if res != liveOffline {
-		t.Fatalf("verdict = %v, want offline-ready\n%s", res, out.String())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "apps:search"):
+			f.appsCalls++
+			w.WriteHeader(status(f.appsStatus))
+			_, _ = w.Write([]byte(orDefault(f.appsBody, `{"apps":[]}`)))
+		case strings.HasPrefix(r.URL.Path, "/"+storageAPIPath+"/"):
+			f.objectCalls++
+			w.WriteHeader(status(f.objectsStatus))
+			_, _ = w.Write([]byte(orDefault(f.objectsBody, `{"items":[]}`)))
+		default:
+			w.WriteHeader(status(f.editStatus))
+			_, _ = w.Write([]byte(orDefault(f.editBody, `{"id":"edit-1"}`)))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func orDefault(v, fallback string) string {
+	if v == "" {
+		return fallback
 	}
-	if !strings.Contains(out.String(), "skipped") {
-		t.Errorf("doctor should say the probe was skipped:\n%s", out.String())
+	return v
+}
+
+const (
+	permissionDeniedBody = `{"error":{"code":403,"message":"The caller does not have permission","status":"PERMISSION_DENIED"}}`
+	unauthenticatedBody  = `{"error":{"code":401,"message":"Request had invalid authentication credentials","status":"UNAUTHENTICATED"}}`
+)
+
+// TestPlayDoctorReportingGapDoesNotBreakTheVerdict: Reporting is a separate
+// service with a separate grant, so a credential that publishes but cannot read
+// it is a working setup — the gap is reported, the verdict stays READY.
+func TestPlayDoctorReportingGapDoesNotBreakTheVerdict(t *testing.T) {
+	fake := &playFake{appsStatus: http.StatusForbidden, appsBody: permissionDeniedBody}
+	res, output, err := playDoctorAgainst(t, fake.start(t), false)
+	if res != liveOK {
+		t.Fatalf("verdict = %v (err %v), want ready\n%s", res, err, output)
+	}
+	for _, want := range []string{"publishing is unaffected", "View app information"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("doctor output missing %q:\n%s", want, output)
+		}
+	}
+}
+
+// TestPlayDoctorProbesReporting: the vitals tools live on a different service
+// from every write, and a doctor that never calls it cannot vouch for them.
+func TestPlayDoctorProbesReporting(t *testing.T) {
+	fake := &playFake{appsBody: `{"apps":[{"packageName":"com.example.app"},{"packageName":"com.example.other"}]}`}
+	res, output, err := playDoctorAgainst(t, fake.start(t), false)
+	if res != liveOK {
+		t.Fatalf("verdict = %v (err %v)\n%s", res, err, output)
+	}
+	if fake.appsCalls != 1 {
+		t.Errorf("reporting probe made %d calls, want 1", fake.appsCalls)
+	}
+	if !strings.Contains(output, "2 apps visible") {
+		t.Errorf("doctor should report what Reporting can see:\n%s", output)
+	}
+}
+
+// TestPlayDoctorWithoutAPackage covers the fallback: with no app to open an
+// edit on, Reporting is the only evidence available, and what it says decides
+// how much doctor may claim.
+func TestPlayDoctorWithoutAPackage(t *testing.T) {
+	tests := []struct {
+		name       string
+		fake       playFake
+		want       liveResult
+		wantOutput []string
+	}{
+		{
+			// The credential works, but nothing proved it may publish to any
+			// particular app — so doctor says exactly that.
+			name:       "a listing proves the credential without proving publish access",
+			fake:       playFake{appsBody: `{"apps":[{"packageName":"com.example.app"}]}`},
+			want:       liveUnverified,
+			wantOutput: []string{"com.example.app", "set-package"},
+		},
+		{
+			// 403 means the token was accepted and only the grant is missing:
+			// the credential is real, which is all we can honestly claim.
+			name:       "a permission denial still proves the credential is real",
+			fake:       playFake{appsStatus: http.StatusForbidden, appsBody: permissionDeniedBody},
+			want:       liveUnverified,
+			wantOutput: []string{"publishing is unaffected"},
+		},
+		{
+			// 401 is the credential itself being rejected — that is broken.
+			name: "a rejected credential is not ready",
+			fake: playFake{appsStatus: http.StatusUnauthorized, appsBody: unauthenticatedBody},
+			want: liveFailed,
+		},
+		{
+			// The Reporting API allows 10 queries/second, so a quota refusal is
+			// a realistic answer to a first probe — and it must not report a
+			// credential the sign-in just proved as rejected.
+			name: "a rate-limited Reporting API is inconclusive",
+			fake: playFake{appsStatus: http.StatusTooManyRequests, appsBody: `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}`},
+			want: liveInconclusive,
+		},
+		{
+			name: "an unreachable Reporting API is inconclusive",
+			fake: playFake{appsStatus: http.StatusInternalServerError, appsBody: `{"error":{"code":500,"message":"Internal error","status":"INTERNAL"}}`},
+			want: liveInconclusive,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := tc.fake
+			playDoctorEnv(t, fake.start(t))
+
+			var out bytes.Buffer
+			res, err := playDoctor(context.Background(), &out, false)
+			output := out.String()
+			if res != tc.want {
+				t.Fatalf("verdict = %v (err %v), want %v\n%s", res, err, tc.want, output)
+			}
+			if !strings.Contains(output, "skipped") {
+				t.Errorf("doctor should say the publish probe was skipped:\n%s", output)
+			}
+			for _, want := range tc.wantOutput {
+				if !strings.Contains(output, want) {
+					t.Errorf("doctor output missing %q:\n%s", want, output)
+				}
+			}
+		})
+	}
+}
+
+// TestPlayDoctorProbesTheReportsBucketOnlyWhenConfigured: asking about a bucket
+// nobody set is noise, and a bucket that was set is a capability the user
+// explicitly asked for.
+func TestPlayDoctorProbesTheReportsBucketOnlyWhenConfigured(t *testing.T) {
+	t.Run("unset means unprobed", func(t *testing.T) {
+		fake := &playFake{}
+		if res, out, err := playDoctorAgainst(t, fake.start(t), false); res != liveOK {
+			t.Fatalf("verdict = %v (err %v)\n%s", res, err, out)
+		}
+		if fake.objectCalls != 0 {
+			t.Errorf("doctor read a bucket nobody configured (%d calls)", fake.objectCalls)
+		}
+	})
+
+	t.Run("a readable bucket is reported", func(t *testing.T) {
+		fake := &playFake{}
+		playDoctorAgainst(t, fake.start(t), true) // seed env, offline: no probes
+		t.Setenv("PLAY_REPORTS_BUCKET", "pubsite_prod_rev_123")
+		t.Setenv("PLAY_PACKAGE_NAME", "com.example.app")
+
+		var out bytes.Buffer
+		res, err := playDoctor(context.Background(), &out, false)
+		if res != liveOK {
+			t.Fatalf("verdict = %v (err %v)\n%s", res, err, out.String())
+		}
+		if fake.objectCalls != 1 {
+			t.Errorf("bucket probe made %d calls, want 1", fake.objectCalls)
+		}
+		if !strings.Contains(out.String(), "gs://pubsite_prod_rev_123") {
+			t.Errorf("doctor should name the bucket it read:\n%s", out.String())
+		}
+	})
+
+	t.Run("a refused bucket is a broken setup", func(t *testing.T) {
+		fake := &playFake{objectsStatus: http.StatusForbidden, objectsBody: permissionDeniedBody}
+		playDoctorAgainst(t, fake.start(t), true)
+		t.Setenv("PLAY_REPORTS_BUCKET", "pubsite_prod_rev_123")
+		t.Setenv("PLAY_PACKAGE_NAME", "com.example.app")
+
+		var out bytes.Buffer
+		res, err := playDoctor(context.Background(), &out, false)
+		if res != liveFailed {
+			t.Fatalf("verdict = %v (err %v), want failed\n%s", res, err, out.String())
+		}
+	})
+}
+
+// TestReportsBucketHintNamesTheRightFix: for a signed-in user the likeliest
+// cause is invisible in the config — the saved token predates the scope — and
+// no amount of re-configuring fixes it.
+func TestReportsBucketHintNamesTheRightFix(t *testing.T) {
+	refused := &apiError{Status: http.StatusForbidden, Message: "denied"}
+
+	oauth := &PlayConfig{ClientID: "id", ClientSecret: "secret", ReportsBucket: "b"}
+	if got := reportsBucketHint(refused, oauth).Error(); !strings.Contains(got, "rollout login play") {
+		t.Errorf("a signed-in user should be told to re-consent: %s", got)
+	}
+
+	sa := &PlayConfig{ServiceAccountFile: "/keys/play.json", ReportsBucket: "b"}
+	if got := reportsBucketHint(refused, sa).Error(); !strings.Contains(got, "Users & permissions") {
+		t.Errorf("a service account should be told where to grant access: %s", got)
+	}
+
+	// A failure that is not a refusal must pass through untouched: inventing a
+	// permissions story for a 500 sends the user to fix what is not broken.
+	transient := &apiError{Status: http.StatusInternalServerError, Message: "boom"}
+	if got := reportsBucketHint(transient, oauth); got != error(transient) {
+		t.Errorf("a 500 should pass through unchanged, got %v", got)
 	}
 }
 

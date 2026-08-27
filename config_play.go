@@ -15,6 +15,10 @@ const (
 	// defaultPlayReportingBaseURL serves the Play Developer Reporting API
 	// v1beta1 — a separate service with its own scope and its own quota.
 	defaultPlayReportingBaseURL = "https://playdeveloperreporting.googleapis.com"
+	// defaultPlayStorageBaseURL serves the JSON API for the GCS bucket holding
+	// the CSV report exports — a third service, reachable only when a reports
+	// bucket is configured.
+	defaultPlayStorageBaseURL = "https://storage.googleapis.com"
 )
 
 // credentialMode names how rollout authenticates to Google Play.
@@ -58,6 +62,9 @@ type PlayConfig struct {
 	BaseURL string `toml:"api_base_url"`
 	// ReportingBaseURL overrides the Play Developer Reporting endpoint.
 	ReportingBaseURL string `toml:"reporting_base_url"`
+	// StorageBaseURL overrides the Cloud Storage endpoint the reports bucket
+	// is read through.
+	StorageBaseURL string `toml:"storage_base_url"`
 
 	// --- unexported bookkeeping ---
 
@@ -108,6 +115,7 @@ func (c *PlayConfig) finalize() {
 		"PLAY_REPORTS_BUCKET":       &c.ReportsBucket,
 		"PLAY_API_BASE_URL":         &c.BaseURL,
 		"PLAY_REPORTING_BASE_URL":   &c.ReportingBaseURL,
+		"PLAY_STORAGE_BASE_URL":     &c.StorageBaseURL,
 	})
 	c.serviceAccountJSON = strings.TrimSpace(os.Getenv("PLAY_SERVICE_ACCOUNT_JSON"))
 	// GOOGLE_APPLICATION_CREDENTIALS is the Google-wide convention, so a
@@ -122,6 +130,7 @@ func (c *PlayConfig) finalize() {
 	c.ReportsBucket = strings.TrimSpace(c.ReportsBucket)
 	c.BaseURL = normalizeBaseURL(c.BaseURL, defaultPlayBaseURL)
 	c.ReportingBaseURL = normalizeBaseURL(c.ReportingBaseURL, defaultPlayReportingBaseURL)
+	c.StorageBaseURL = normalizeBaseURL(c.StorageBaseURL, defaultPlayStorageBaseURL)
 }
 
 // credentialMode reports how rollout will authenticate. A service-account key

@@ -34,6 +34,7 @@ func playShowConfig(out io.Writer) error {
 		{"reports bucket:      ", orNone(cfg.ReportsBucket)},
 		{"api base url:        ", cfg.BaseURL},
 		{"reporting base url:  ", cfg.ReportingBaseURL},
+		{"storage base url:    ", cfg.StorageBaseURL},
 		{"scopes:              ", strings.Join(cfg.scopes(), ", ")},
 	}
 	for _, set := range settings {
