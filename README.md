@@ -37,7 +37,7 @@ You (or the agent) apply it on purpose, or it expires.
 
 | Platform | Setup guide | Surface |
 | --- | --- | --- |
-| Google Play | [`docs/play.md`](docs/play.md) | 35 tools — tracks, releases, listings, reviews, and Android vitals |
+| Google Play | [`docs/play.md`](docs/play.md) | 41 tools — tracks, releases, listings, in-app products and subscriptions, reviews, and Android vitals |
 
 The platform registry exists so a second store (App Store Connect is the
 obvious one) is a new file rather than an edit to the shared auth, config, and

@@ -48,6 +48,12 @@ type PendingMutation struct {
 	// Payload is the platform's own operation payload, kept opaque here so
 	// this file never learns what any store's writes look like.
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// ApplyNote is one sentence saying what confirming actually does, supplied
+	// by the platform because only it knows whether a given write is
+	// transactional. It is not decoration: a preview that promises the API will
+	// validate the change first is describing a safety net, and for the
+	// resources that are not edit-scoped that net does not exist.
+	ApplyNote string `json:"apply_note,omitempty"`
 	// Track and RolloutFraction restate the two facts the shared guard rails
 	// need when a token is confirmed: which track is being written and what
 	// staged-rollout fraction it would end up at. They are declared by the
@@ -86,6 +92,8 @@ type pendingWrite struct {
 	Dispatch string
 	// Payload is the platform's own operation payload.
 	Payload json.RawMessage
+	// ApplyNote is what confirming will do; see PendingMutation.ApplyNote.
+	ApplyNote string
 	// Track and RolloutFraction declare what the shared guard rails re-check
 	// at confirm time.
 	Track           string
@@ -125,6 +133,7 @@ func stageWrite(w pendingWrite) (*PendingMutation, error) {
 		Summary:         w.Summary,
 		Dispatch:        w.Dispatch,
 		Payload:         w.Payload,
+		ApplyNote:       w.ApplyNote,
 		Track:           w.Track,
 		RolloutFraction: w.RolloutFraction,
 		ScopedDelete:    w.ScopedDelete,
@@ -309,7 +318,11 @@ func (p *PendingMutation) previewText() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "PREVIEW — %s on %s\n", p.Tool, p.PackageName)
 	fmt.Fprintf(&b, "%s\n", p.Summary)
-	fmt.Fprintf(&b, "Nothing has been changed yet. Confirming opens a fresh edit, validates it, and commits.\n")
+	b.WriteString("Nothing has been changed yet.")
+	if p.ApplyNote != "" {
+		b.WriteString(" " + p.ApplyNote)
+	}
+	b.WriteByte('\n')
 	fmt.Fprintf(&b, "\nTo apply, re-run with --confirm %s (or run: rollout confirm %s)\n", p.Token, p.Token)
 	return b.String()
 }
