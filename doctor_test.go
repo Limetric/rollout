@@ -84,7 +84,7 @@ func TestStatusLineVerdicts(t *testing.T) {
 		{liveInconclusive, nil, "INCONCLUSIVE"},
 	}
 	for _, tc := range tests {
-		if got := statusLine(tc.res, tc.err); !strings.Contains(got, tc.want) {
+		if got := statusLine(styles{}, tc.res, tc.err); !strings.Contains(got, tc.want) {
 			t.Errorf("statusLine(%v) = %q, want it to contain %q", tc.res, got, tc.want)
 		}
 	}

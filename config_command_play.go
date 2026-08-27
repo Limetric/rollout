@@ -20,19 +20,25 @@ func playShowConfig(out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "credential mode:      %s\n", playCredentialModeSummary(cfg))
-	fmt.Fprintf(out, "service account:      %s\n", playServiceAccountSummary(cfg))
-	fmt.Fprintf(out, "client id:            %s\n", orNone(cfg.ClientID))
-	fmt.Fprintf(out, "client secret:        %s\n", redactSecret(cfg.ClientSecret))
+	s := newStyles(out)
 	store := describeTokenStore(playTokenPolicy.Platform)
-	fmt.Fprintf(out, "token store:          %s\n", store.location())
-	fmt.Fprintf(out, "saved sign-in:        %s\n", store.describe(playTokenPolicy))
-	fmt.Fprintf(out, "package name:         %s\n", orNone(cfg.PackageName))
-	fmt.Fprintf(out, "developer id:         %s\n", orNone(cfg.DeveloperID))
-	fmt.Fprintf(out, "reports bucket:       %s\n", orNone(cfg.ReportsBucket))
-	fmt.Fprintf(out, "api base url:         %s\n", cfg.BaseURL)
-	fmt.Fprintf(out, "reporting base url:   %s\n", cfg.ReportingBaseURL)
-	fmt.Fprintf(out, "scopes:               %s\n", strings.Join(cfg.scopes(), ", "))
+	settings := []struct{ label, value string }{
+		{"credential mode:     ", playCredentialModeSummary(cfg)},
+		{"service account:     ", playServiceAccountSummary(cfg)},
+		{"client id:           ", orNone(cfg.ClientID)},
+		{"client secret:       ", redactSecret(cfg.ClientSecret)},
+		{"token store:         ", store.location()},
+		{"saved sign-in:       ", store.describe(playTokenPolicy)},
+		{"package name:        ", orNone(cfg.PackageName)},
+		{"developer id:        ", orNone(cfg.DeveloperID)},
+		{"reports bucket:      ", orNone(cfg.ReportsBucket)},
+		{"api base url:        ", cfg.BaseURL},
+		{"reporting base url:  ", cfg.ReportingBaseURL},
+		{"scopes:              ", strings.Join(cfg.scopes(), ", ")},
+	}
+	for _, set := range settings {
+		fmt.Fprintf(out, "%s %s\n", s.label(set.label), s.value(set.value))
+	}
 	return nil
 }
 
@@ -88,7 +94,9 @@ var playSetPackageCmd = &cobra.Command{
 		if err := upsertConfigKey(path, playConfigTable, "package_name", pkg); err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "default package set to %s in %s\n", pkg, path)
+		out := cmd.OutOrStdout()
+		s := newStyles(out)
+		fmt.Fprintf(out, "%s default package set to %s in %s\n", s.markOK(), s.accent(pkg), s.muted(path))
 		return nil
 	},
 }
@@ -112,7 +120,9 @@ var playSetDeveloperIDCmd = &cobra.Command{
 		if err := upsertConfigKey(path, playConfigTable, "developer_id", id); err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "developer ID set to %s in %s\n", id, path)
+		out := cmd.OutOrStdout()
+		s := newStyles(out)
+		fmt.Fprintf(out, "%s developer ID set to %s in %s\n", s.markOK(), s.accent(id), s.muted(path))
 		return nil
 	},
 }

@@ -24,11 +24,13 @@ var configPathCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("resolve config path: %w", err)
 		}
+		out := cmd.OutOrStdout()
+		s := newStyles(out)
 		if resolved == "" {
-			fmt.Fprintln(cmd.OutOrStdout(), "environment only (no config file)")
+			fmt.Fprintln(out, s.value("environment only (no config file)"))
 			return nil
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), resolved)
+		fmt.Fprintln(out, resolved)
 		return nil
 	},
 }
@@ -51,12 +53,13 @@ var configShowCmd = &cobra.Command{
 			source = "(none — environment only)"
 		}
 		out := cmd.OutOrStdout()
-		fmt.Fprintf(out, "config file:          %s\n", source)
+		s := newStyles(out)
+		fmt.Fprintf(out, "%s %s\n", s.label("config file:         "), s.value(source))
 		for _, p := range platforms() {
 			if p.ShowConfig == nil {
 				continue
 			}
-			fmt.Fprintf(out, "\n[%s] %s\n", p.Name, p.Title)
+			fmt.Fprintf(out, "\n%s\n", s.header(fmt.Sprintf("[%s] %s", p.Name, p.Title)))
 			if err := p.ShowConfig(out); err != nil {
 				return err
 			}

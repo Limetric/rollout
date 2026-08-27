@@ -49,7 +49,9 @@ var auditCmd = &cobra.Command{
 		}
 		out := cmd.OutOrStdout()
 		if len(entries) == 0 {
-			fmt.Fprintln(out, "no audited writes yet (the audit log records every confirmed mutation)")
+			// The entries themselves are JSON lines and stay uncolored so
+			// `rollout audit | jq` keeps working; only this note is styled.
+			fmt.Fprintln(out, newStyles(out).muted("no audited writes yet (the audit log records every confirmed mutation)"))
 			return nil
 		}
 		if auditLimit > 0 && len(entries) > auditLimit {

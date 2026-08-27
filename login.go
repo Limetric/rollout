@@ -412,8 +412,9 @@ func runServiceAccountLogin(ctx context.Context, out io.Writer, cfg *PlayConfig,
 	if err := saveServiceAccountPath(target, cfg.ServiceAccountFile); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "✓ Service account %s recorded in %s\n", key.ClientEmail, target)
-	fmt.Fprintf(out, "\nIf the check below fails with a permission error, invite\n  %s\nin Play Console → Users & permissions and grant it access to your app.\n\n", key.ClientEmail)
+	s := newStyles(out)
+	fmt.Fprintf(out, "%s Service account %s recorded in %s\n", s.markOK(), s.accent(key.ClientEmail), s.accent(target))
+	fmt.Fprintf(out, "\n%s\n\n", s.muted(fmt.Sprintf("If the check below fails with a permission error, invite\n  %s\nin Play Console → Users & permissions and grant it access to your app.", key.ClientEmail)))
 	return verifyLogin(ctx, out, cfg)
 }
 
@@ -425,10 +426,11 @@ func runNonInteractiveLogin(ctx context.Context, out io.Writer, cfg *PlayConfig,
 	if err != nil {
 		return err
 	}
+	s := newStyles(out)
 	if creds.kind == "web" {
-		fmt.Fprintln(out, "Warning: this is a Web-application client; loopback sign-in expects a Desktop-app client. Trying anyway.")
+		fmt.Fprintln(out, s.warning("Warning: this is a Web-application client; loopback sign-in expects a Desktop-app client. Trying anyway."))
 	}
-	fmt.Fprintf(out, "Waiting for callback on %s …\n", loopbackRedirectURL(loginPort))
+	fmt.Fprintf(out, "Waiting for callback on %s …\n", s.url(loopbackRedirectURL(loginPort)))
 	refreshToken, err := signInLoopback(ctx, cfg, creds, openBrowserOrPrint(out), loginPort)
 	if err != nil {
 		return err
@@ -436,7 +438,7 @@ func runNonInteractiveLogin(ctx context.Context, out io.Writer, cfg *PlayConfig,
 	if err := savePlayCredentials(target, creds, refreshToken); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "✓ Signed in. Credentials written to %s\n", target)
+	fmt.Fprintf(out, "%s Signed in. Credentials written to %s\n", s.markOK(), s.accent(target))
 	cfg.ClientID, cfg.ClientSecret = creds.clientID, creds.clientSecret
 	cfg.ServiceAccountFile, cfg.serviceAccountJSON = "", ""
 	return verifyLogin(ctx, out, cfg)
@@ -445,8 +447,9 @@ func runNonInteractiveLogin(ctx context.Context, out io.Writer, cfg *PlayConfig,
 // verifyLogin runs the same live probe `rollout doctor play` does, so a
 // successful login means the API answered rather than that a file was written.
 func verifyLogin(ctx context.Context, out io.Writer, cfg *PlayConfig) error {
+	s := newStyles(out)
 	if cfg.PackageName == "" {
-		fmt.Fprintln(out, "READY — set a default app with `rollout config play set-package com.example.app`, then try `rollout play tracks`.")
+		fmt.Fprintf(out, "%s — set a default app with `rollout config play set-package com.example.app`, then try `rollout play tracks`.\n", s.success("READY"))
 		return nil
 	}
 	res, err := runPlayDoctorLive(ctx, out, cfg)
@@ -456,7 +459,7 @@ func verifyLogin(ctx context.Context, out io.Writer, cfg *PlayConfig) error {
 	if res != liveOK {
 		return fmt.Errorf("signed in, but the live check did not pass — run `rollout doctor play` for the full report")
 	}
-	fmt.Fprintln(out, "\nREADY — try `rollout play tracks`.")
+	fmt.Fprintf(out, "\n%s — try `rollout play tracks`.\n", s.success("READY"))
 	return nil
 }
 
@@ -464,15 +467,16 @@ func verifyLogin(ctx context.Context, out io.Writer, cfg *PlayConfig) error {
 // missing browser opener (a headless Linux box without xdg-open) must not abort
 // the login.
 func openBrowserOrPrint(out io.Writer) func(string) error {
+	s := newStyles(out)
 	if loginNoBrowser {
 		return func(u string) error {
-			fmt.Fprintf(out, "Open this URL in your browser:\n  %s\n", u)
+			fmt.Fprintf(out, "Open this URL in your browser:\n  %s\n", s.url(u))
 			return nil
 		}
 	}
 	return func(u string) error {
 		if err := openBrowser(u); err != nil {
-			fmt.Fprintf(out, "Could not open a browser (%v).\nOpen this URL manually:\n  %s\n", err, u)
+			fmt.Fprintf(out, "%s\nOpen this URL manually:\n  %s\n", s.warning(fmt.Sprintf("Could not open a browser (%v).", err)), s.url(u))
 		}
 		return nil
 	}

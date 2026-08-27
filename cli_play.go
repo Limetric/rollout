@@ -58,8 +58,11 @@ func runPlayWrite[A any](cmd *cobra.Command, args A, handler func(context.Contex
 		return err
 	}
 	// The next step goes to stderr so stdout stays valid JSON for jq pipelines.
+	// res.Preview itself stays plain — MCP serializes that same field — so the
+	// color is added here, on the way to the terminal.
 	if !res.Applied && res.ConfirmToken != "" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "\n%s", res.Preview)
+		errOut := cmd.ErrOrStderr()
+		fmt.Fprintf(errOut, "\n%s", newStyles(errOut).previewBlock(res.Preview))
 	}
 	return nil
 }

@@ -45,9 +45,10 @@ var doctorCmd = &cobra.Command{
 		}
 
 		out := cmd.OutOrStdout()
+		s := newStyles(out)
 		defer func() {
 			for _, name := range skipped {
-				fmt.Fprintf(out, "\nskipped %s — not configured. Run `rollout doctor %s` to see what it needs.\n", name, name)
+				fmt.Fprintf(out, "\n%s\n", s.muted(fmt.Sprintf("skipped %s — not configured. Run `rollout doctor %s` to see what it needs.", name, name)))
 			}
 		}()
 		var worst *platformVerdict
@@ -56,14 +57,14 @@ var doctorCmd = &cobra.Command{
 				fmt.Fprintln(out)
 			}
 			if len(targets) > 1 {
-				fmt.Fprintf(out, "=== %s (%s) ===\n", p.Title, p.Name)
+				fmt.Fprintf(out, "%s\n", s.header(fmt.Sprintf("=== %s (%s) ===", p.Title, p.Name)))
 			}
 			if p.Doctor == nil {
 				fmt.Fprintf(out, "%s has no health checks yet.\n", p.Title)
 				continue
 			}
 			res, err := p.Doctor(cmd.Context(), out, doctorOffline)
-			fmt.Fprint(out, statusLine(res, err))
+			fmt.Fprint(out, statusLine(s, res, err))
 			if worst == nil || res.worseThan(worst.result) {
 				worst = &platformVerdict{result: res, err: err}
 			}
@@ -134,19 +135,22 @@ const (
 // worst outcome. The iota order is already severity order.
 func (r liveResult) worseThan(other liveResult) bool { return r > other }
 
-// statusLine renders the verdict a platform's doctor reached.
-func statusLine(res liveResult, err error) string {
+// statusLine renders the verdict a platform's doctor reached. The verdict
+// itself is colored — it is the one line a user scans for — while the
+// explanation after it stays plain so it remains readable at a glance.
+func statusLine(s styles, res liveResult, err error) string {
+	label := s.label("status:")
 	switch res {
 	case liveOK:
-		return "\nstatus: READY (live check passed)\n"
+		return fmt.Sprintf("\n%s %s %s\n", label, s.success("READY"), s.muted("(live check passed)"))
 	case liveOffline:
-		return "\nstatus: READY — credentials resolve (offline check). Run `rollout doctor` to verify against the API.\n"
+		return fmt.Sprintf("\n%s %s — credentials resolve (offline check). Run `rollout doctor` to verify against the API.\n", label, s.success("READY"))
 	case liveUnconfigured:
-		return fmt.Sprintf("\nstatus: NOT READY — %v\n", err)
+		return fmt.Sprintf("\n%s %s — %v\n", label, s.failure("NOT READY"), err)
 	case liveInconclusive:
-		return "\nstatus: INCONCLUSIVE — credentials resolve, but the API couldn't be reached (network/transient). Setup unconfirmed, not necessarily broken.\n"
+		return fmt.Sprintf("\n%s %s — credentials resolve, but the API couldn't be reached (network/transient). Setup unconfirmed, not necessarily broken.\n", label, s.warning("INCONCLUSIVE"))
 	default: // liveFailed
-		return "\nstatus: NOT READY — the API rejected the request (see above)\n"
+		return fmt.Sprintf("\n%s %s — the API rejected the request (see above)\n", label, s.failure("NOT READY"))
 	}
 }
 
@@ -187,14 +191,15 @@ func liveVerdictFor(err error) liveResult {
 // inconclusive one — and returns the classification. label should be padded to
 // align with the ✓ lines (a trailing space follows the marker).
 func reportProbe(out io.Writer, label string, err error) liveResult {
+	s := newStyles(out)
 	verdict := liveVerdictFor(err)
-	marker := "?"
+	marker := s.markUnknown()
 	prefix := "could not reach the API: "
 	if verdict == liveFailed {
-		marker = "✗"
+		marker = s.markFail()
 		prefix = ""
 	}
-	fmt.Fprintf(out, "%s %s %s%v\n", label, marker, prefix, err)
+	fmt.Fprintf(out, "%s %s %s%v\n", s.label(label), marker, prefix, err)
 	return verdict
 }
 
