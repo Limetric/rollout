@@ -1,0 +1,205 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize, labeled]
+
+concurrency:
+  # A 'labeled' event for some other label is skipped by the job-level if, but the run
+  # is still created and joins this group first -- which would cancel an in-flight
+  # review and then review nothing. Park those runs in a group of their own.
+  group: >-
+    claude-review-${{ github.event.pull_request.number }}-${{
+    github.event.action == 'labeled' && github.event.label.name != 'full-review'
+    && github.run_id || 'review' }}
+  cancel-in-progress: true
+
+jobs:
+  # Works out whether there is anything new to review, and scopes the review to the
+  # commits added since the last round. A cancelled run simply leaves the previous
+  # marker in place, so the next run picks the range up again -- nothing is skipped.
+  scope:
+    # 'labeled' fires for every label; only the forced-review label should start a run.
+    if: >
+      github.event.pull_request.draft == false &&
+      (github.event.action != 'labeled' || github.event.label.name == 'full-review')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    outputs:
+      should-review: ${{ steps.scope.outputs.should-review }}
+      round: ${{ steps.scope.outputs.round }}
+      diff-base: ${{ steps.scope.outputs.diff-base }}
+      marker-line: ${{ steps.scope.outputs.marker-line }}
+      scope-instructions: ${{ steps.scope.outputs.scope-instructions }}
+      prior-findings: ${{ steps.scope.outputs.prior-findings }}
+    steps:
+      - name: Checkout review scripts
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Determine review scope
+        id: scope
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKER: claude-review-state
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MAX_ROUNDS: "3"
+          FORCE_LABEL: full-review
+        run: .github/scripts/review-scope.sh
+
+  claude-review:
+    needs: scope
+    if: needs.scope.outputs.should-review == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read # Required to read CI results on PRs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 20
+
+      # Materialise the exact diff each round is allowed to report on, so scoping
+      # does not depend on the reviewer choosing the right command.
+      - name: Prepare review diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIFF_BASE: ${{ needs.scope.outputs.diff-base }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          mkdir -p .review-scope
+          if [ -n "$DIFF_BASE" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/compare/$DIFF_BASE...$HEAD_SHA" \
+              -H "Accept: application/vnd.github.v3.diff" >.review-scope/review.diff
+          else
+            gh pr diff "$PR_NUMBER" -R "$GITHUB_REPOSITORY" >.review-scope/review.diff
+          fi
+          echo "::notice::Review diff is $(wc -l <.review-scope/review.diff) lines."
+
+      - name: Run Claude Code review
+        id: review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: "*"
+          plugin_marketplaces: |
+            https://github.com/JuliusBrussee/caveman.git
+          plugins: |
+            caveman@caveman
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            REVIEW ROUND: ${{ needs.scope.outputs.round }}
+
+            ## What to review
+
+            ${{ needs.scope.outputs.scope-instructions }}
+
+            ${{ needs.scope.outputs.prior-findings }}
+
+            ## Severity gate
+
+            Report a finding only when it clears one of these bars:
+
+            - BLOCKER: incorrect behaviour, data loss or corruption, a security hole,
+              or a broken build or deploy, on a realistic path through the code.
+            - MAJOR: a user-visible regression, or a significant performance or
+              operational problem.
+
+            Anything below MAJOR is not a finding. Do not report it, do not mention it
+            in passing, and do not append it as a note or an aside.
+
+            A finding must also satisfy all of:
+
+            - It has a realistic failure scenario supported by the changed code.
+            - You are highly confident it is real after reading the surrounding code.
+            - The author would reasonably want to fix it before merging.
+
+            Do NOT post:
+
+            - Summaries of what the PR does
+            - Praise, approval, or "looks good" remarks
+            - Optional improvements, speculative edge cases, theoretical future concerns, or defensive hardening without a demonstrated risk
+            - Generic requests for more tests, validation, types, comments, logging, refactoring, or abstraction
+            - Maintainability, consistency, style, or preference suggestions unless the current code creates a concrete and material defect risk
+            - Pre-existing problems that this pull request does not worsen
+            - Questions the author can answer from the diff or existing context
+            - Duplicate or already-resolved comments
+
+            A missing test is a finding only when you can identify important behaviour
+            that is incorrect or likely to regress, not merely because changed code
+            lacks a test.
+
+            ## How much to report
+
+            Report every finding that clears the gate above. Do not rank real blockers
+            away to stay under a count, and do not pad the list to reach one. Returning
+            nothing is the correct result for most rounds after the first.
+
+            For each finding give the severity, the file and location, the concrete
+            failure scenario and its impact, and a specific recommended change. If you
+            cannot state the scenario and impact clearly, omit the finding.
+
+            ## Output
+
+            Post your review as a single PR comment with `gh pr comment`. The comment
+            must contain only the findings, followed by this exact line as the last
+            line:
+
+            ${{ needs.scope.outputs.marker-line }}
+
+            If nothing clears the severity gate, the comment must be exactly these two
+            lines:
+
+            No actionable feedback.
+            ${{ needs.scope.outputs.marker-line }}
+
+            The marker line is required in every case -- the next review round reads it
+            to work out which commits it still has to look at. Reproduce it verbatim.
+
+            Use `gh pr view` and `gh pr diff` as needed to gather context before
+            commenting.
+
+          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
+          # or https://code.claude.com/docs/en/cli-reference for available options
+          claude_args: |
+            --model claude-opus-5
+            --effort medium
+            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --system-prompt "Caveman mode active. Respond terse like smart caveman: drop articles, filler, pleasantries, hedging. Keep technical terms exact. Code and commands unchanged; security warnings clear."
+
+          # This is an optional setting that allows Claude to read CI results on PRs
+          additional_permissions: |
+            actions: read
+
+      # The marker is written by the reviewer itself, so a dropped one would silently
+      # send the next round back to reviewing the whole diff. Make that visible.
+      - name: Verify review marker
+        if: always() && steps.review.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MARKER_LINE: ${{ needs.scope.outputs.marker-line }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          bodies=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.user.type == "Bot") | .body')
+          if printf '%s' "$bodies" | grep -Fq "$MARKER_LINE"; then
+            echo "::notice::Review state marker recorded for this round."
+          else
+            echo "::warning::The review comment is missing its state marker ($MARKER_LINE). The next round will fall back to reviewing the full diff."
+          fi

@@ -11,3 +11,6 @@ credentials.json
 # OS / editor cruft
 .DS_Store
 *.swp
+
+# Diff scaffolding written by the automated PR review workflows
+.review-scope/
