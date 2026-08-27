@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -39,7 +40,21 @@ func runPlayRead[A, R any](cmd *cobra.Command, args A, format string, handler fu
 	if err != nil {
 		return err
 	}
-	return printResult(cmd.OutOrStdout(), format, res)
+	if err := printResult(cmd.OutOrStdout(), format, res); err != nil {
+		return err
+	}
+	// Row-only formats drop every field that is not a column, which for a
+	// partial result means dropping the fact that it is partial. Say it on
+	// stderr, where it cannot corrupt a CSV being redirected into a file.
+	if f := strings.ToLower(strings.TrimSpace(format)); f == "table" || f == "csv" {
+		if note, ok := any(res).(completenessNote); ok {
+			if text := note.completeness(); text != "" {
+				errOut := cmd.ErrOrStderr()
+				fmt.Fprintf(errOut, "%s\n", newStyles(errOut).warning(text))
+			}
+		}
+	}
+	return nil
 }
 
 // runPlayWrite builds the client, runs a write handler, and prints the result.

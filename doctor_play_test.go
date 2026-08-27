@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -436,5 +438,49 @@ func TestPlayDoctorSendsTheAuthHeaderAndUserAgent(t *testing.T) {
 	}
 	if gotPath != "/androidpublisher/v3/applications/com.example.app/edits" {
 		t.Errorf("probe called %q", gotPath)
+	}
+}
+
+// TestStorageFailuresGetStorageAdvice: apiError's hint is written for the
+// Publishing API. "Grant Release to production" is the wrong fix for a bucket
+// 403, "the app needs an uploaded artifact" is the wrong fix for a missing
+// object, and the Publisher quota is the wrong number for a throttled read.
+func TestStorageFailuresGetStorageAdvice(t *testing.T) {
+	sa := &PlayConfig{ServiceAccountFile: "/keys/play.json", ReportsBucket: "b"}
+
+	tests := []struct {
+		name     string
+		status   int
+		want     string
+		unwanted string
+	}{
+		{"refused", http.StatusForbidden, "report access", "Release to production"},
+		{"missing", http.StatusNotFound, "Download reports", "uploaded artifact"},
+		{"throttled", http.StatusTooManyRequests, "not the Publisher API's", "200,000 requests/day"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := fmt.Errorf("list gs://b/stats: %w", &apiError{Status: tc.status, Message: "nope"})
+			got := reportsBucketHint(wrapped, sa).Error()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("advice should mention %q: %s", tc.want, got)
+			}
+			if strings.Contains(got, tc.unwanted) {
+				t.Errorf("advice should not carry the Publishing hint %q: %s", tc.unwanted, got)
+			}
+			// The context the caller wrapped in survives, so the message still
+			// names what was being read.
+			if !strings.Contains(got, "gs://b/stats") {
+				t.Errorf("advice dropped the caller's context: %s", got)
+			}
+		})
+	}
+
+	// The apiError has to stay reachable, because doctor picks its verdict from
+	// the status code.
+	wrapped := reportsBucketHint(fmt.Errorf("list: %w", &apiError{Status: http.StatusForbidden}), sa)
+	var apiErr *apiError
+	if !errors.As(wrapped, &apiErr) || apiErr.Status != http.StatusForbidden {
+		t.Errorf("the API error is no longer unwrappable: %v", wrapped)
 	}
 }

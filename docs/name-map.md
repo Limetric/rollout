@@ -131,6 +131,15 @@ developer account id (`--developer-id`, `PLAY_DEVELOPER_ID`, or
 | `rollout play error reports` | `play_error_reports` |
 | `rollout play anomalies` | `play_anomalies` |
 
+## CSV report exports
+
+| CLI | MCP |
+| --- | --- |
+| `rollout play reports list` | `play_reports_list` |
+| `rollout play reports get` | `play_report` |
+| `rollout play reports installs` | `play_installs` |
+| `rollout play reports ratings` | `play_ratings` |
+
 ## Confirming a write from either front-end
 
 A write tool returns a preview and a confirm token on its first call. Apply it

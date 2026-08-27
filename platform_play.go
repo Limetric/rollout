@@ -68,10 +68,11 @@ var playPlatform = registerPlatform(&Platform{
 		errorsCmd,
 		errorCmd,
 		anomaliesCmd,
+		reportsCmd,
 	},
 
 	Login:          playLoginCmd,
-	ConfigCommands: []*cobra.Command{playSetPackageCmd, playSetDeveloperIDCmd},
+	ConfigCommands: []*cobra.Command{playSetPackageCmd, playSetDeveloperIDCmd, playSetReportsBucketCmd},
 
 	RegisterMCP: registerPlayTools,
 	NewApplier:  func(ctx context.Context) (mutationApplier, error) { return newPlayClient(ctx) },

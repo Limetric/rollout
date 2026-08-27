@@ -19,9 +19,13 @@ import (
 type recordedRequest struct {
 	Method string
 	Path   string
-	Query  string
-	Body   string
-	Header http.Header
+	// RequestURI is the raw target as it arrived, before Go decodes escapes.
+	// Path alone cannot show whether an object name was escaped, because %2F
+	// decodes back into the slash it was hiding.
+	RequestURI string
+	Query      string
+	Body       string
+	Header     http.Header
 }
 
 // fakePlayAPI is an httptest server that records every request and answers from
@@ -44,7 +48,7 @@ func newFakePlayAPI(t *testing.T, handler http.HandlerFunc) *fakePlayAPI {
 		body := head
 		api.mu.Lock()
 		api.requests = append(api.requests, recordedRequest{
-			Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery,
+			Method: r.Method, Path: r.URL.Path, RequestURI: r.RequestURI, Query: r.URL.RawQuery,
 			Body: string(body), Header: r.Header.Clone(),
 		})
 		api.mu.Unlock()
@@ -91,6 +95,10 @@ func newTestClient(t *testing.T, api *fakePlayAPI) *Client {
 	cfg := &PlayConfig{PackageName: "com.example.app"}
 	cfg.BaseURL = api.URL
 	cfg.ReportingBaseURL = api.URL
+	// Every endpoint points at the fake, including the one no test in this file
+	// uses: a base URL left at its default would send an offline unit test to
+	// the real Google the moment a handler started calling it.
+	cfg.StorageBaseURL = api.URL
 	client, err := NewClient(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

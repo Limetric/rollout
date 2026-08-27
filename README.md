@@ -37,7 +37,7 @@ You (or the agent) apply it on purpose, or it expires.
 
 | Platform | Setup guide | Surface |
 | --- | --- | --- |
-| Google Play | [`docs/play.md`](docs/play.md) | 41 tools — tracks, releases, listings, in-app products and subscriptions, reviews, and Android vitals |
+| Google Play | [`docs/play.md`](docs/play.md) | 53 tools — tracks, releases, listings, in-app products and subscriptions, reviews, Android vitals, and the CSV report exports |
 
 The platform registry exists so a second store (App Store Connect is the
 obvious one) is a new file rather than an edit to the shared auth, config, and
@@ -180,6 +180,7 @@ audit` stay byte-identical either way. Override with `--color always|never|auto`
 
 - [`docs/play.md`](docs/play.md) — setup, tool coverage, release semantics, troubleshooting
 - [`docs/reporting.md`](docs/reporting.md) — vitals metric sets, dimensions, thresholds
+- [`docs/reports.md`](docs/reports.md) — the CSV report exports: installs, ratings, financials
 - [`docs/name-map.md`](docs/name-map.md) — CLI ↔ MCP name map
 
 See [`AGENTS.md`](AGENTS.md) for the contributor workflow and conventions.

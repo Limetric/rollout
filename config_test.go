@@ -360,3 +360,28 @@ func slicesContains(list []string, want string) bool {
 	}
 	return false
 }
+
+// TestReportsBucketAcceptsAGsURI: the Console shows the bucket as a `gs://…`
+// URI, and that is what lands in a hand-written config or a CI variable. Left
+// verbatim it would be sent as the bucket name and every report call would 404.
+func TestReportsBucketAcceptsAGsURI(t *testing.T) {
+	clearPlayEnv(t)
+	t.Setenv("PLAY_REPORTS_BUCKET", "gs://pubsite_prod_rev_1234567890/stats/")
+	cfg, err := loadPlayConfig("")
+	if err != nil {
+		t.Fatalf("loadPlayConfig: %v", err)
+	}
+	if cfg.ReportsBucket != "pubsite_prod_rev_1234567890" {
+		t.Errorf("reports bucket = %q", cfg.ReportsBucket)
+	}
+
+	clearPlayEnv(t)
+	path := writeConfig(t, "[play]\nreports_bucket = \"gs://pubsite_prod_rev_99\"\n")
+	cfg, err = loadPlayConfig(path)
+	if err != nil {
+		t.Fatalf("loadPlayConfig: %v", err)
+	}
+	if cfg.ReportsBucket != "pubsite_prod_rev_99" {
+		t.Errorf("reports bucket from TOML = %q", cfg.ReportsBucket)
+	}
+}

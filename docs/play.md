@@ -8,6 +8,7 @@ Everything `rollout` does with Google Play, and what you need to set up first.
 - [Pick a default app](#pick-a-default-app)
 - [Everyday commands](#everyday-commands)
 - [Tool coverage](#tool-coverage)
+- [CSV report exports](#csv-report-exports)
 - [Release semantics](#release-semantics)
 - [Guard rails](#guard-rails)
 - [Troubleshooting](#troubleshooting)
@@ -38,6 +39,7 @@ your app until it is invited there.
 | Reads, releases, store listing writes | *Release to production, exclude devices, and use Play App Signing* on the app |
 | `play_vitals`, `play_error_issues`, `play_anomalies`, `play_apps` | *View app information (read-only)* — **Release Manager alone does not grant this** |
 | Reviews | *Reply to reviews* |
+| `play_reports_list`, `play_report`, `play_installs`, `play_ratings` | *View app information (read-only)*, plus *View financial data* for sales, earnings, and subscriptions — the export bucket inherits Console permissions |
 
 ## Guided setup
 
@@ -255,8 +257,38 @@ Reporting:
 | `play_error_reports` | Individual reports behind an issue — the stack traces |
 | `play_anomalies` | Metric anomalies Play itself flagged |
 
+CSV report exports (from the Cloud Storage bucket, not an API):
+
+| Tool | What it does |
+| --- | --- |
+| `play_reports_list` | What the export bucket holds: kind, month, dimension, size |
+| `play_report` | Download and parse one exported CSV — installs, ratings, crashes, store performance, subscriptions, reviews, sales, earnings |
+| `play_installs` | Daily installs and active devices over a trailing window |
+| `play_ratings` | Daily average rating over a trailing window |
+
 See [`name-map.md`](name-map.md) for the CLI command each one corresponds to,
-and [`reporting.md`](reporting.md) for the vitals metric sets in detail.
+[`reporting.md`](reporting.md) for the vitals metric sets in detail, and
+[`reports.md`](reports.md) for the CSV exports.
+
+## CSV report exports
+
+Installs, ratings, crash statistics, store performance, subscriptions, the full
+review history, and the financial reports have no Play API at all — Play writes
+them as monthly CSVs to a Cloud Storage bucket. Point `rollout` at it once:
+
+```bash
+rollout config play set-reports-bucket pubsite_prod_rev_1234567890
+
+rollout play reports list --kind installs --format table
+rollout play reports installs --days 30 --format table
+rollout play reports get --kind sales --month 2026-07 --out sales.csv
+```
+
+The bucket inherits Console permissions (*View app information* for statistics,
+*View financial data* for the financial reports), and setting it adds the
+read-only Cloud Storage scope — so a sign-in that predates the setting has to be
+repeated. Full details, including every report kind and its dimensions, are in
+[`reports.md`](reports.md).
 
 ## Release semantics
 

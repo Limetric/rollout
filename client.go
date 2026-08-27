@@ -29,9 +29,11 @@ const publisherAPIPath = "androidpublisher/v3"
 
 // Client talks to Google Play. It is safe for concurrent use.
 type Client struct {
-	cfg    *PlayConfig
-	http   *http.Client
-	upload *http.Client
+	cfg  *PlayConfig
+	http *http.Client
+	// stream is the client for transfers whose size is not known in advance —
+	// media uploads and report downloads.
+	stream *http.Client
 }
 
 // newPlayClient builds a Play client from the resolved configuration (the
@@ -54,12 +56,12 @@ func NewClient(ctx context.Context, cfg *PlayConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Media uploads stream arbitrarily large bodies, and http.Client.Timeout
-	// covers the whole transfer — a 60s cap would abort any upload slower than
-	// that. Bound the response-header wait instead (a server that never answers
-	// still can't hang the CLI) and let the request context bound the transfer.
-	upload := &http.Client{Transport: authed.Transport}
-	return &Client{cfg: cfg, http: authed, upload: upload}, nil
+	// Media transfers move arbitrarily large bodies, and http.Client.Timeout
+	// covers the whole transfer — the 60s cap that keeps an ordinary API call
+	// from hanging would abort any upload, or any report download, slower than
+	// that. Let the request context bound these instead.
+	stream := &http.Client{Transport: authed.Transport}
+	return &Client{cfg: cfg, http: authed, stream: stream}, nil
 }
 
 // platformName makes *Client a mutationApplier: Play's namespace, which the
@@ -127,34 +129,6 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	return c.doAt(ctx, c.cfg.BaseURL+"/"+publisherAPIPath+"/"+path, method, query, body, out, policyFor(method))
 }
 
-// storageAPIPath is the version-carrying prefix for Cloud Storage JSON calls.
-const storageAPIPath = "storage/v1"
-
-// listReportObjects asks the reports bucket for a single object name. Nothing
-// reads the CSV exports yet; this exists so `doctor` can prove the bucket is
-// reachable, because nothing local can. The devstorage scope is added to the
-// credential only when a reports bucket is configured (see PlayConfig.scopes),
-// so a user who signed in before setting one holds a token that predates the
-// scope — a state the config looks perfectly right in and only a live call
-// exposes.
-//
-// Listing is the operation a report reader will perform, so it is the one worth
-// proving; asking for bucket metadata instead would check a different
-// permission from the one that matters.
-func (c *Client) listReportObjects(ctx context.Context, bucket string) error {
-	query := url.Values{"maxResults": {"1"}, "fields": {"items/name"}}
-	rawURL := c.cfg.StorageBaseURL + "/" + storageAPIPath + "/b/" + url.PathEscape(bucket) + "/o"
-	var page struct {
-		Items []struct {
-			Name string `json:"name"`
-		} `json:"items"`
-	}
-	if err := c.doAt(ctx, rawURL, http.MethodGet, query, nil, &page, retryIdempotent); err != nil {
-		return fmt.Errorf("list gs://%s: %w", bucket, err)
-	}
-	return nil
-}
-
 // doWrite is do for a call that must never be retried automatically.
 func (c *Client) doWrite(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	return c.doAt(ctx, c.cfg.BaseURL+"/"+publisherAPIPath+"/"+path, method, query, body, out, retryNever)
@@ -172,6 +146,41 @@ func policyFor(method string) retryPolicy {
 // doAt is do against a fully-qualified URL, so the Reporting API and the upload
 // endpoints share one implementation of headers, retries, and error parsing.
 func (c *Client) doAt(ctx context.Context, rawURL, method string, query url.Values, body, out any, policy retryPolicy) error {
+	data, err := c.fetch(ctx, rawURL, method, query, body, fetchOptions{policy: policy, accept: "application/json", client: c.http})
+	if err != nil {
+		return err
+	}
+	if out != nil && len(data) > 0 {
+		if err := json.Unmarshal(data, out); err != nil {
+			return fmt.Errorf("decode %s response: %w", rawURL, err)
+		}
+	}
+	return nil
+}
+
+// fetchOptions tunes one raw request: which failures to retry, what to accept,
+// which HTTP client to send on, and how many bytes to take.
+//
+// client is a choice rather than always c.http because a report download has no
+// bounded size: it belongs on the streaming client, where the request context
+// is the deadline instead of the 60s whole-transfer cap. maxBytes is the other
+// half of that — an unbounded deadline and an unbounded body together are how a
+// process runs out of memory.
+type fetchOptions struct {
+	policy retryPolicy
+	accept string
+	client *http.Client
+	// maxBytes caps the response body; 0 takes it whole. A response past the
+	// cap is an error, never a truncation — half a CSV parses as a whole one.
+	maxBytes int64
+}
+
+// fetch issues one request under the retry policy and returns the raw response
+// body. doAt decodes JSON on top of it; the Cloud Storage reader downloads
+// media through it, which is why the response is bytes rather than a decoded
+// value — a CSV export is not JSON, and it should still get the same headers,
+// backoff, and Google error-envelope parsing as everything else.
+func (c *Client) fetch(ctx context.Context, rawURL, method string, query url.Values, body any, opts fetchOptions) ([]byte, error) {
 	if len(query) > 0 {
 		rawURL += "?" + query.Encode()
 	}
@@ -180,7 +189,7 @@ func (c *Client) doAt(ctx context.Context, rawURL, method string, query url.Valu
 		var err error
 		payload, err = json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("encode request: %w", err)
+			return nil, fmt.Errorf("encode request: %w", err)
 		}
 	}
 
@@ -191,42 +200,46 @@ func (c *Client) doAt(ctx context.Context, rawURL, method string, query url.Valu
 		}
 		req, err := http.NewRequestWithContext(ctx, method, rawURL, reader)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Accept", opts.accept)
 		req.Header.Set("User-Agent", playUserAgent())
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		resp, err := c.http.Do(req)
+		resp, err := opts.client.Do(req)
 		if err != nil {
-			return fmt.Errorf("call %s %s: %w", method, rawURL, err)
+			return nil, fmt.Errorf("call %s %s: %w", method, rawURL, err)
 		}
-		data, readErr := io.ReadAll(resp.Body)
+		body := io.Reader(resp.Body)
+		if opts.maxBytes > 0 {
+			// One byte past the cap, so an over-long body is detectable rather
+			// than silently truncated into something that still parses.
+			body = io.LimitReader(resp.Body, opts.maxBytes+1)
+		}
+		data, readErr := io.ReadAll(body)
 		resp.Body.Close()
 		if readErr != nil {
-			return fmt.Errorf("read %s response: %w", rawURL, readErr)
+			return nil, fmt.Errorf("read %s response: %w", rawURL, readErr)
+		}
+		if opts.maxBytes > 0 && int64(len(data)) > opts.maxBytes && resp.StatusCode < 300 {
+			return nil, fmt.Errorf("%s is larger than the %d MB rollout will read into memory", rawURL, opts.maxBytes>>20)
 		}
 
 		if resp.StatusCode >= 300 {
 			apiErr := parseAPIError(resp.StatusCode, data)
-			if attempt < retryMaxAttempts && policy.retryable(resp.StatusCode) {
+			if attempt < retryMaxAttempts && opts.policy.retryable(resp.StatusCode) {
 				select {
 				case <-time.After(backoffDelay(attempt, resp.Header.Get("Retry-After"))):
 					continue
 				case <-ctx.Done():
-					return apiErr
+					return nil, apiErr
 				}
 			}
-			return apiErr
+			return nil, apiErr
 		}
-		if out != nil && len(data) > 0 {
-			if err := json.Unmarshal(data, out); err != nil {
-				return fmt.Errorf("decode %s response: %w", rawURL, err)
-			}
-		}
-		return nil
+		return data, nil
 	}
 }
 
