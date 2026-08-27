@@ -304,6 +304,14 @@ func TestPlayDoctorWithoutAPackage(t *testing.T) {
 			want: liveFailed,
 		},
 		{
+			// The Reporting API allows 10 queries/second, so a quota refusal is
+			// a realistic answer to a first probe — and it must not report a
+			// credential the sign-in just proved as rejected.
+			name: "a rate-limited Reporting API is inconclusive",
+			fake: playFake{appsStatus: http.StatusTooManyRequests, appsBody: `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}`},
+			want: liveInconclusive,
+		},
+		{
 			name: "an unreachable Reporting API is inconclusive",
 			fake: playFake{appsStatus: http.StatusInternalServerError, appsBody: `{"error":{"code":500,"message":"Internal error","status":"INTERNAL"}}`},
 			want: liveInconclusive,

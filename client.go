@@ -257,6 +257,11 @@ func (e *apiError) bare() string {
 // problem the user must fix rather than a transient failure.
 func (e *apiError) isClientError() bool { return e.Status >= 400 && e.Status < 500 }
 
+// isThrottled reports whether the request was rate-limited rather than refused.
+// It is the one 4xx that says nothing about the setup: the same call, with the
+// same credential, succeeds once the quota window moves.
+func (e *apiError) isThrottled() bool { return e.Status == http.StatusTooManyRequests }
+
 func (e *apiError) reasonOrStatus() string {
 	if e.Reason != "" {
 		return e.Reason

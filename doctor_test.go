@@ -19,6 +19,7 @@ type stubAPIError struct {
 
 func (e *stubAPIError) Error() string       { return fmt.Sprintf("api error %d", e.status) }
 func (e *stubAPIError) isClientError() bool { return e.status >= 400 && e.status < 500 }
+func (e *stubAPIError) isThrottled() bool   { return e.status == http.StatusTooManyRequests }
 
 func TestLiveVerdictFor(t *testing.T) {
 	tests := []struct {
@@ -32,6 +33,9 @@ func TestLiveVerdictFor(t *testing.T) {
 		// A 500 means we could not get a verdict. Reporting it as a broken
 		// setup would send users to re-check credentials that are fine.
 		{"500 from the API is inconclusive", &stubAPIError{status: http.StatusInternalServerError}, liveInconclusive},
+		// The exception to the 4xx rule: a quota is not a verdict about the
+		// credential, and the same call succeeds once the window moves.
+		{"429 from the API is rate limiting, not a rejection", &stubAPIError{status: http.StatusTooManyRequests}, liveInconclusive},
 		{"transport failure is inconclusive", errors.New("dial tcp: connection refused"), liveInconclusive},
 		{
 			name: "invalid_grant from the token endpoint is definitive",

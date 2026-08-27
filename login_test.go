@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -379,6 +380,44 @@ func TestServiceAccountLoginWithoutAPackageListsTheApps(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("login output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// TestServiceAccountLoginSurvivesARateLimitedProbe: the token exchange has
+// already proved the credential and the config is written by this point, so a
+// quota refusal from the probe must not report the sign-in as failed.
+func TestServiceAccountLoginSurvivesARateLimitedProbe(t *testing.T) {
+	clearPlayEnv(t)
+	isolateTokenStore(t)
+	originalDelay := retryBaseDelay
+	retryBaseDelay = time.Millisecond
+	t.Cleanup(func() { retryBaseDelay = originalDelay })
+
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "key.json")
+	if err := os.WriteFile(keyPath, []byte(generateServiceAccountKey(t, "bot@p.iam.gserviceaccount.com")), 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}`))
+	}))
+	defer srv.Close()
+
+	configFile := filepath.Join(dir, "config.toml")
+	var out bytes.Buffer
+	cfg := &PlayConfig{BaseURL: srv.URL, ReportingBaseURL: srv.URL, StorageBaseURL: srv.URL}
+	if err := runServiceAccountLogin(context.Background(), &out, cfg, configFile, keyPath); err != nil {
+		t.Fatalf("a throttled probe must not fail the sign-in: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "READY") {
+		t.Errorf("login should still report success:\n%s", out.String())
+	}
+	data, err := os.ReadFile(configFile)
+	if err != nil || !strings.Contains(string(data), keyPath) {
+		t.Errorf("the credential should be persisted (err %v):\n%s", err, data)
 	}
 }
 

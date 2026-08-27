@@ -169,15 +169,30 @@ type definitiveAPIError interface {
 	isClientError() bool
 }
 
+// throttledAPIError is implemented by a platform's API error type when it can
+// recognize rate limiting — the one 4xx that is not a verdict about the setup.
+// It is a separate interface from definitiveAPIError so a platform that does
+// not implement it keeps its 4xx classification instead of silently losing it.
+type throttledAPIError interface {
+	isThrottled() bool
+}
+
 // liveVerdictFor classifies a live-probe error. A 4xx from the platform's API is
 // definitive — the request or credentials are wrong (liveFailed). So is a 4xx
 // from the OAuth token endpoint (oauth2.RetrieveError): invalid_grant means
 // the refresh token is revoked or the service-account key is disabled. Anything
-// else — a 5xx, a connection failure — means we simply couldn't get a verdict
-// (liveInconclusive), which must not be reported as a broken setup.
+// else — a 5xx, a connection failure, a quota — means we simply couldn't get a
+// verdict (liveInconclusive), which must not be reported as a broken setup.
 func liveVerdictFor(err error) liveResult {
 	if err == nil {
 		return liveOK
+	}
+	// Checked before the 4xx rule it is an exception to: retries are already
+	// exhausted by the time a 429 arrives here, and calling a quota a rejected
+	// credential would send the user to re-check a setup that is fine.
+	var throttled throttledAPIError
+	if errors.As(err, &throttled) && throttled.isThrottled() {
+		return liveInconclusive
 	}
 	var apiErr definitiveAPIError
 	if errors.As(err, &apiErr) && apiErr.isClientError() {
