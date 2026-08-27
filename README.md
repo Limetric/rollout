@@ -33,26 +33,32 @@ plumbing.
 
 ## Install
 
-```bash
-go build -o build/rollout .
-```
+Three ways in, no wrong answer:
 
-Release binaries and a Homebrew tap arrive with v0.1.0:
+- **Homebrew** (macOS/Linux):
 
-```bash
-brew install Limetric/tap/rollout
-```
+  ```bash
+  brew install Limetric/tap/rollout
+  ```
+
+- **Prebuilt binary** — grab one from the
+  [releases page](https://github.com/Limetric/rollout/releases/latest).
+
+- **Build from source**:
+
+  ```bash
+  go build -o build/rollout .
+  ```
 
 ## Quick start
 
 ```bash
-rollout login play                              # guided setup, ends with a live check
+rollout login play                              # guided setup + live check
 rollout config play set-package com.example.app # so --package can be omitted
-rollout doctor play                             # opens and deletes a real edit
 rollout play tracks
 ```
 
-For CI, skip the wizard entirely:
+CI skips the wizard:
 
 ```bash
 export PLAY_SERVICE_ACCOUNT_FILE=/path/to/key.json
@@ -60,9 +66,9 @@ export PLAY_PACKAGE_NAME=com.example.app
 rollout doctor play
 ```
 
-The one step that is easy to miss: the credential must be invited in Play
-Console → **Users & permissions**. Authenticating is not the same as having
-access to an app. See [docs/play.md](docs/play.md#prerequisites).
+Don't forget to invite the credential in Play Console → **Users & permissions**
+— authenticating isn't the same as having access. Details in
+[docs/play.md](docs/play.md#prerequisites).
 
 ## MCP hosts
 
