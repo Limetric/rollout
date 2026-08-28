@@ -53,6 +53,18 @@ func printResult(w io.Writer, format string, res any) error {
 	}
 }
 
+// completenessNote is implemented by a read result whose rows do not tell the
+// whole story — a capped listing, a truncated report, a window with days that
+// were never exported.
+//
+// It exists because `--format table` and `--format csv` render rows and nothing
+// else: the JSON result carries the caveat in a field, and a CSV of a capped
+// report would otherwise look exactly like a complete one. runPlayRead prints
+// what this returns to stderr, so the data on stdout stays pipeable.
+type completenessNote interface {
+	completeness() string
+}
+
 // addFormatFlag registers the shared --format flag on a read command.
 func addFormatFlag(cmd *cobra.Command, dst *string) {
 	cmd.Flags().StringVar(dst, "format", "json", "output format: json, table, or csv")

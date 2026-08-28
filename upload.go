@@ -93,7 +93,7 @@ func (c *Client) initiateUpload(ctx context.Context, path, contentType string, s
 	req.Header.Set("X-Upload-Content-Length", strconv.FormatInt(size, 10))
 	req.Header.Set("Content-Length", "0")
 
-	resp, err := c.upload.Do(req)
+	resp, err := c.stream.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("start upload: %w", err)
 	}
@@ -188,7 +188,7 @@ func (c *Client) sendChunk(ctx context.Context, sessionURL string, f *os.File, s
 	req.Header.Set("User-Agent", playUserAgent())
 	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, size))
 
-	resp, err := c.upload.Do(req)
+	resp, err := c.stream.Do(req)
 	if err != nil {
 		return 0, nil, 0, err
 	}
@@ -218,7 +218,7 @@ func (c *Client) queryUploadOffset(ctx context.Context, sessionURL string, size 
 	req.Header.Set("User-Agent", playUserAgent())
 	req.Header.Set("Content-Range", fmt.Sprintf("bytes */%d", size))
 
-	resp, err := c.upload.Do(req)
+	resp, err := c.stream.Do(req)
 	if err != nil {
 		return 0, err
 	}

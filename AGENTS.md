@@ -92,6 +92,13 @@ Google Play provider:
   any failure. An edit is owned by one call and never persisted across processes.
 - `upload.go` — resumable uploads (bundles, APKs, images, deobfuscation files).
 - `reporting.go` — Play Developer Reporting API v1beta1 (vitals, errors, anomalies).
+- `gcs.go` — the minimal Cloud Storage reader for the CSV report exports
+  (`objects.list` under a prefix, `objects.get` for metadata and `?alt=media`
+  for the bytes), sharing `client.go`'s retries and error parsing. Downloads use
+  the streaming HTTP client with their own deadline; the 60s cap that keeps an
+  ordinary API call from hanging would abort a large export.
+- `reports_csv.go` — UTF-16 → UTF-8 decoding, CSV → snake_cased rows, and the
+  zip extraction the financial reports need.
 - `login.go` / `login_wizard.go` — `rollout login play`, plus the loopback OAuth
   server the user flow captures its authorization code on.
 - `write_play.go` — Play's dispatch routes and preview/apply helpers.
@@ -140,6 +147,14 @@ Google Play provider:
   Console → Users & permissions with per-app permissions. Writes need *Release to
   production / testing tracks*; vitals needs *View app information (read-only)* —
   Release Manager alone does not grant Reporting access.
+- Installs, ratings, crashes, store performance, subscriptions, full review
+  history, sales and earnings have **no API**: they are monthly CSVs in the
+  `pubsite_prod_rev_<developer id>` bucket, UTF-16 encoded, the financial ones
+  zipped. The bucket inherits Console permissions, and the storage scope is
+  requested only when `reports_bucket` is set — so a sign-in that predates the
+  setting holds a token without it. Object names are *listed*, never
+  constructed: subscriptions embed a product id and earnings a per-account
+  suffix.
 - Quotas: Publisher API 200k requests/day, Reporting API 10 QPS. Reads that open
   edits count against it; keep one edit per call.
 - Testers via API are Google Groups only; reviews are returned only for the last
@@ -150,8 +165,9 @@ Google Play provider:
 
 - User-facing docs: `README.md` (shared concepts), `docs/play.md` (setup, login,
   tool coverage, troubleshooting), `docs/reporting.md` (vitals metric sets and
-  thresholds), `docs/name-map.md` (CLI ↔ MCP name map). `docs_test.go` fails the
-  build when a tool is served but undocumented, or documented but not served.
+  thresholds), `docs/reports.md` (the CSV report exports), `docs/name-map.md`
+  (CLI ↔ MCP name map). `docs_test.go` fails the build when a tool is served but
+  undocumented, or documented but not served.
 - Agent skill: `plugins/rollout/skills/rollout/SKILL.md`, surfaced through
   `.claude-plugin/marketplace.json`. It has to list every command, and a test
   checks that.

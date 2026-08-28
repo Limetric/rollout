@@ -127,7 +127,10 @@ func (c *PlayConfig) finalize() {
 	}
 	c.PackageName = strings.TrimSpace(c.PackageName)
 	c.DeveloperID = strings.TrimSpace(c.DeveloperID)
-	c.ReportsBucket = strings.TrimSpace(c.ReportsBucket)
+	// The Console shows the bucket as a `gs://…` URI, and that is what lands in
+	// a hand-written config or a CI variable. Trim it here rather than only in
+	// `config play set-reports-bucket`, so every way of setting it works.
+	c.ReportsBucket = trimBucketURI(c.ReportsBucket)
 	c.BaseURL = normalizeBaseURL(c.BaseURL, defaultPlayBaseURL)
 	c.ReportingBaseURL = normalizeBaseURL(c.ReportingBaseURL, defaultPlayReportingBaseURL)
 	c.StorageBaseURL = normalizeBaseURL(c.StorageBaseURL, defaultPlayStorageBaseURL)
@@ -263,6 +266,16 @@ func (c *PlayConfig) scopes() []string {
 		s = append(s, "https://www.googleapis.com/auth/devstorage.read_only")
 	}
 	return s
+}
+
+// trimBucketURI reduces a `gs://bucket/path` URI to its bucket name, and leaves
+// a bare name alone.
+func trimBucketURI(s string) string {
+	bucket := strings.Trim(strings.TrimPrefix(strings.TrimSpace(s), "gs://"), "/")
+	if i := strings.Index(bucket, "/"); i >= 0 {
+		bucket = bucket[:i]
+	}
+	return bucket
 }
 
 // playConfigured reports whether anything Play-specific has been set up: a

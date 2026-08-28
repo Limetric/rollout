@@ -1,6 +1,6 @@
 ---
 name: rollout
-description: Use when working with Google Play — checking what version is live, staging or growing a rollout, promoting a build between tracks, halting a bad release, editing store listings, managing in-app products and subscriptions, replying to reviews, or reading crash/ANR vitals. Drives the `rollout` CLI. Triggers include "google play", "play console", "staged rollout", "release notes", "store listing", "app bundle", "crash rate", "ANR", "promote to production", "in-app product", "subscription", "base plan", "offer".
+description: Use when working with Google Play — checking what version is live, staging or growing a rollout, promoting a build between tracks, halting a bad release, editing store listings, managing in-app products and subscriptions, replying to reviews, reading crash/ANR vitals, or pulling install, rating, and revenue numbers from the CSV report exports. Drives the `rollout` CLI. Triggers include "google play", "play console", "staged rollout", "release notes", "store listing", "app bundle", "crash rate", "ANR", "promote to production", "in-app product", "subscription", "base plan", "offer", "how many installs", "download numbers", "app revenue", "average rating".
 ---
 
 # rollout — Google Play via the `rollout` CLI
@@ -113,6 +113,41 @@ Rules worth knowing before you compose a command:
 - A release write never rewrites a track from your arguments — it changes the
   one release you named and leaves the rest alone.
 
+## Install, rating and revenue numbers
+
+These live in **no Play API**. Play exports them as monthly CSVs to a Cloud
+Storage bucket, and `rollout play reports` reads it:
+
+```bash
+rollout play reports installs --days 30 --format table   # daily installs/uninstalls/active devices
+rollout play reports ratings --days 30                   # daily average rating
+rollout play reports list --kind sales                   # what months exist
+rollout play reports get --kind sales --month 2026-07 --out sales.csv
+```
+
+Kinds are `installs`, `ratings`, `crashes`, `store_performance`,
+`subscriptions`, `reviews`, `sales`, `earnings`. `reports get` also takes
+`--dimension` (`overview`, `country`, `device`, `os_version`, `app_version`,
+`carrier`, `language` — the set varies by kind).
+
+Facts worth carrying into an answer:
+
+- **The exports run a few days behind.** The last 3–7 days of any window are
+  normally absent. `installs`/`ratings` return them as `missing_days` with a
+  `data_through` date — report the gap, never read a missing day as zero.
+- If the command says no bucket is configured, ask the user to run
+  `rollout config play set-reports-bucket <bucket>` with the
+  `pubsite_prod_rev_…` name from Play Console → Download reports. **Never guess
+  a bucket name.** A `403` afterwards usually means they signed in before
+  setting it and need to run `rollout login play` again.
+- `reports get` caps its JSON rows and reports `row_count`, the file's real
+  size. For a whole month of a wide breakdown, pass `--out file.csv` and analyse
+  the file with a script instead of pulling rows into context. `--out` only ever
+  creates a file — pick a fresh path, and if one is in the way say so rather
+  than replacing it.
+- Several files can match one month (subscriptions have one per product id); the
+  tool refuses to guess and lists them. Use `reports list`, then `--object`.
+
 ## Store listings
 
 ```bash
@@ -216,7 +251,8 @@ Every command below is `rollout play <command>`; the shared ones (`confirm`,
 **Reads**: `apps`, `tracks`, `releases`, `artifacts`, `listing`, `images`,
 `details`, `testers`, `countries`, `device-tiers`, `users`, `edit status`,
 `products`, `subscriptions`, `subscription get`, `reviews`, `review get`,
-`vitals`, `vitals summary`, `errors`, `error reports`, `anomalies`.
+`vitals`, `vitals summary`, `errors`, `error reports`, `anomalies`,
+`reports list`, `reports get`, `reports installs`, `reports ratings`.
 
 **Writes** (preview then confirm): `upload`, `release create`, `release update`,
 `release halt`, `release resume`, `release complete`, `promote`, `testers set`,
@@ -228,7 +264,7 @@ Every command below is `rollout play <command>`; the shared ones (`confirm`,
 `user revoke`, `user remove`.
 
 Run `rollout play <command> --help` for the flags. Full documentation is in the
-repository's `docs/play.md`.
+repository's `docs/play.md`, with the CSV exports in `docs/reports.md`.
 
 ## Guard rails
 

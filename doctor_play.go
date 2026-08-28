@@ -205,18 +205,64 @@ func probeReportsBucket(ctx context.Context, out io.Writer, client *Client, cfg 
 	return probeOutcome{result: liveOK}
 }
 
-// reportsBucketHint names the fix for a refused bucket read. For a signed-in
-// user the likeliest cause is invisible from the config: the storage scope is
-// requested only when a reports bucket is set, so a sign-in that predates the
-// setting holds a token without it, and no amount of re-configuring helps.
+// reportsBucketHint names the fix for a refused or failed bucket read.
+//
+// It renders the API's own message without apiError's hint, because that hint
+// is written for the Publishing API: "grant Release to production" is the wrong
+// advice for a Cloud Storage 403, "the app must have an uploaded artifact" is
+// the wrong advice for a missing bucket, and the Publisher quota figure is the
+// wrong number for a throttled object read. Each is replaced here with the fix
+// that actually applies.
+//
+// For a signed-in user the likeliest cause of a refusal is invisible from the
+// config: the storage scope is requested only when a reports bucket is set, so
+// a sign-in that predates the setting holds a token without it, and no amount
+// of re-configuring helps.
 func reportsBucketHint(err error, cfg *PlayConfig) error {
-	if !isPermissionDenied(err) && !isUnauthenticated(err) {
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) {
 		return err
 	}
-	if cfg.credentialMode() == credentialOAuthUser {
-		return fmt.Errorf("%w — if you signed in before setting reports_bucket, the saved token predates the Cloud Storage scope; run `%s` again to re-consent", err, playTokenPolicy.loginCommand())
+	advice := storageAdvice(apiErr, cfg)
+	if advice == "" {
+		return err
 	}
-	return fmt.Errorf("%w — grant this credential read access to the bucket in Play Console → Users & permissions (report access), and make sure the bucket name is the `pubsite_prod_rev_…` one shown there", err)
+	// The bare message plus storage advice, keeping the surrounding context the
+	// caller wrapped in (which names the bucket and object). The original chain
+	// is retained so errors.As still finds the *apiError underneath — doctor
+	// classifies its verdict from the status code.
+	return &storageError{
+		err:  err,
+		text: fmt.Sprintf("%s — %s", strings.Replace(err.Error(), apiErr.Error(), apiErr.bare(), 1), advice),
+	}
+}
+
+// storageError renders a Cloud Storage failure with advice that applies to
+// Cloud Storage, while remaining unwrappable to the *apiError underneath.
+type storageError struct {
+	err  error
+	text string
+}
+
+func (e *storageError) Error() string { return e.text }
+func (e *storageError) Unwrap() error { return e.err }
+
+// storageAdvice is the fix for one Cloud Storage failure, or "" where rollout
+// has nothing to add beyond what the API said.
+func storageAdvice(err *apiError, cfg *PlayConfig) string {
+	switch err.Status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		if cfg.credentialMode() == credentialOAuthUser {
+			return fmt.Sprintf("if you signed in before setting reports_bucket, the saved token predates the Cloud Storage scope; run `%s` again to re-consent", playTokenPolicy.loginCommand())
+		}
+		return "grant this credential read access to the bucket in Play Console → Users & permissions (report access), and make sure the bucket name is the `pubsite_prod_rev_…` one shown there"
+	case http.StatusNotFound:
+		return "no such bucket or object — check the name against Play Console → Download reports, and note that a report kind appears only once Play has exported a month of it"
+	case http.StatusTooManyRequests:
+		return "Cloud Storage is rate-limiting this credential; retry shortly. This is the bucket's own quota, not the Publisher API's"
+	default:
+		return ""
+	}
 }
 
 // isPermissionDenied reports whether the API accepted the credential and
@@ -224,12 +270,6 @@ func reportsBucketHint(err error, cfg *PlayConfig) error {
 func isPermissionDenied(err error) bool {
 	var apiErr *apiError
 	return errors.As(err, &apiErr) && apiErr.Status == http.StatusForbidden
-}
-
-// isUnauthenticated reports whether the credential itself was rejected.
-func isUnauthenticated(err error) bool {
-	var apiErr *apiError
-	return errors.As(err, &apiErr) && apiErr.Status == http.StatusUnauthorized
 }
 
 // playUserAgent identifies this binary to the API, so Google's quota and abuse

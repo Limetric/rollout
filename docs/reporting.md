@@ -4,6 +4,10 @@ Android vitals, crash and ANR clusters, and anomalies, via the **Play Developer
 Reporting API v1beta1** — a different service from the publishing API, with its
 own scope, its own permission, and its own quota.
 
+Installs, ratings, store performance and the financial reports are *not* here:
+they have no API and are exported as CSV to a Cloud Storage bucket. See
+[`reports.md`](reports.md).
+
 ## Access
 
 | Requirement | Where |

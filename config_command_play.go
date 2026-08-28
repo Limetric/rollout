@@ -128,6 +128,52 @@ var playSetDeveloperIDCmd = &cobra.Command{
 	},
 }
 
+// playSetReportsBucketCmd persists reports_bucket, the Cloud Storage bucket the
+// CSV report exports land in. Setting it does two things beyond naming a
+// bucket: it enables the report tools, and it adds the read-only Cloud Storage
+// scope to the credential — so a user who signs in first and sets it afterwards
+// has to sign in again to pick the scope up.
+var playSetReportsBucketCmd = &cobra.Command{
+	Use:   "set-reports-bucket <bucket>",
+	Short: "Persist the Cloud Storage bucket holding the CSV report exports",
+	Long:  "Write [play].reports_bucket to the rollout config file. The name is shown in Play\nConsole \u2192 Download reports as the \"Cloud Storage URI\", and looks like\n`pubsite_prod_rev_1234567890`; a full `gs://\u2026` URI is accepted and trimmed.\n\nSetting it also adds the read-only Cloud Storage scope to the credential, so if\nyou signed in with `rollout login play` first, sign in again afterwards.\nPLAY_REPORTS_BUCKET overrides the file value.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		bucket, err := normalizeBucketName(args[0])
+		if err != nil {
+			return err
+		}
+		path, err := writableConfigPath(configPath)
+		if err != nil {
+			return err
+		}
+		if err := upsertConfigKey(path, playConfigTable, "reports_bucket", bucket); err != nil {
+			return err
+		}
+		out := cmd.OutOrStdout()
+		s := newStyles(out)
+		fmt.Fprintf(out, "%s reports bucket set to %s in %s\n", s.markOK(), s.accent(bucket), s.muted(path))
+		if !strings.HasPrefix(bucket, "pubsite_prod") {
+			fmt.Fprintf(out, "%s\n", s.warning("that does not look like a Play export bucket — the name is on Play Console \u2192 Download reports and starts with pubsite_prod"))
+		}
+		fmt.Fprintf(out, "%s\n", s.muted("check it with `rollout doctor play`"))
+		return nil
+	},
+}
+
+// normalizeBucketName accepts what a user is likely to paste: the bare bucket
+// name, or the `gs://bucket/` URI the Console shows.
+func normalizeBucketName(s string) (string, error) {
+	bucket := trimBucketURI(s)
+	if bucket == "" {
+		return "", fmt.Errorf("empty bucket name \u2014 pass the `pubsite_prod_rev_\u2026` name from Play Console \u2192 Download reports")
+	}
+	if strings.ContainsAny(bucket, " \t") {
+		return "", fmt.Errorf("invalid bucket name %q \u2014 a Cloud Storage bucket name has no spaces", s)
+	}
+	return bucket, nil
+}
+
 // validPackageName reports whether s looks like an Android application ID:
 // at least two dot-separated segments, each starting with a letter and holding
 // only letters, digits, and underscores.

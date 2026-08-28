@@ -238,5 +238,23 @@ func registerPlayTools(ctx context.Context, reg *toolRegistrar) error {
 		"List the metric anomalies Play itself has flagged. An empty list means nothing crossed Play's own detection thresholds, which is not the same as the app being healthy — use play_vitals_summary for that.",
 		runAnomalies)
 
+	// --- CSV report exports (Cloud Storage) ---
+
+	addTool(reg, client, "reports_list",
+		"List the monthly CSV reports Play has exported to the reports bucket — installs, ratings, crashes, store performance, subscriptions, reviews, sales, and earnings. Start here to see which months exist; the object names it returns are what play_report takes.",
+		runReportsList)
+
+	addTool(reg, client, "report",
+		"Download and parse one exported CSV report, by kind and month or by exact object name. These numbers exist in no Play API — this bucket is the only source for installs, ratings, store performance, and the financial reports. Rows are capped, and the result says how many the file held; narrow the dimension or raise max_rows for more.",
+		runReport)
+
+	addTool(reg, client, "installs",
+		"Daily installs, uninstalls, upgrades and active devices over a trailing window, stitched from the monthly exports. Days that have not been exported yet are listed as missing rather than reported as zero.",
+		runInstalls)
+
+	addTool(reg, client, "ratings",
+		"Daily and cumulative average star rating over a trailing window. Days that have not been exported yet are listed as missing rather than reported as zero.",
+		runRatings)
+
 	return nil
 }

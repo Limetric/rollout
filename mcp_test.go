@@ -259,3 +259,57 @@ func TestUnconfiguredPlayIsSkipped(t *testing.T) {
 		t.Errorf("error should point at the fix: %v", err)
 	}
 }
+
+// TestReportFileWritesAreNotMCPArguments: play_report reads. Serving an output
+// path over MCP would let an agent create a file at any path the server can
+// write to, with no preview and no confirm token — the thing safety.go exists
+// to prevent for every other write rollout performs.
+func TestReportFileWritesAreNotMCPArguments(t *testing.T) {
+	schema, err := json.Marshal(mcpSchemaFor[ReportArgs](t))
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	for _, banned := range []string{"force", `"out"`} {
+		if strings.Contains(string(schema), banned) {
+			t.Errorf("the MCP input schema exposes %s: %s", banned, schema)
+		}
+	}
+	// The rest of the arguments are still there, so this is not passing by
+	// virtue of an empty schema.
+	for _, want := range []string{"package_name", "kind", "month", "dimension", "object", "max_rows"} {
+		if !strings.Contains(string(schema), want) {
+			t.Errorf("schema is missing %q: %s", want, schema)
+		}
+	}
+}
+
+// mcpSchemaFor returns the input schema the MCP SDK derives for an Args struct.
+func mcpSchemaFor[A any](t *testing.T) any {
+	t.Helper()
+	ctx := context.Background()
+	server := mcp.NewServer(&mcp.Implementation{Name: "rollout", Version: "test"}, nil)
+	reg := &toolRegistrar{server: server, prefix: playPlatformName + "_"}
+	addTool(reg, struct{}{}, "probe", "probe",
+		func(_ context.Context, _ struct{}, _ A) (struct{}, error) { return struct{}{}, nil })
+
+	clientTransport, serverTransport := mcp.NewInMemoryTransports()
+	session, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("server connect: %v", err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
+	cs, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+	res, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(res.Tools) != 1 {
+		t.Fatalf("tools = %d, want 1", len(res.Tools))
+	}
+	return res.Tools[0].InputSchema
+}
