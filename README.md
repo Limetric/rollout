@@ -120,6 +120,21 @@ Homebrew and don't have the repo cloned, install it as a plugin instead:
 /plugin install rollout@rollout
 ```
 
+### As a Codex plugin
+
+Codex reads the same skill through its own plugin manifest. Install the
+`rollout` binary using one of the [install options](#install), make sure it is
+on your `PATH`, then add the plugin:
+
+```bash
+codex plugin marketplace add Limetric/rollout
+codex plugin add rollout@rollout
+```
+
+Complete the [quick start](#quick-start) to configure Google Play access, then
+start a new Codex thread to use the skill. For example: "What version is live
+on production?"
+
 ## Concepts
 
 ### Writes preview first
