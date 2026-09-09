@@ -169,8 +169,9 @@ Google Play provider:
   (CLI ↔ MCP name map). `docs_test.go` fails the build when a tool is served but
   undocumented, or documented but not served.
 - Agent skill: `plugins/rollout/skills/rollout/SKILL.md`, surfaced through
-  `.claude-plugin/marketplace.json`. It has to list every command, and a test
-  checks that.
+  `.claude-plugin/marketplace.json` for Claude Code and
+  `.agents/plugins/marketplace.json` for Codex. Both plugin manifests use the
+  same skill. It has to list every command, and a test checks that.
 - Android Publisher API v3: <https://developers.google.com/android-publisher/api-ref/rest>
 - Play Developer Reporting API v1beta1: <https://developers.google.com/play/developer/reporting>
 - MCP Go SDK: <https://github.com/modelcontextprotocol/go-sdk>
