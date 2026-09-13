@@ -135,6 +135,21 @@ Complete the [quick start](#quick-start) to configure Google Play access, then
 start a new Codex thread to use the skill. For example: "What version is live
 on production?"
 
+### With the `skills` CLI
+
+For any other agent the [`skills`](https://github.com/vercel-labs/skills) CLI
+supports — Cursor, Gemini CLI, GitHub Copilot, OpenCode, … — install the same
+skill straight from the repo. As with the plugins, the `rollout` binary has to
+be installed and on your `PATH`:
+
+```bash
+npx skills add Limetric/rollout --skill rollout            # into the current directory
+npx skills add Limetric/rollout --skill rollout --global   # for all directories
+```
+
+`skills` asks which agents to enable it for; pass `--agent <name>` to pick one
+up front. Run `npx skills update` later to pull in the latest skill.
+
 ## Concepts
 
 ### Writes preview first
