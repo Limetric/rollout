@@ -150,7 +150,7 @@ jobs:
           OPENCODE_CONFIG: ${{ github.workspace }}/.github/opencode-review.json
         with:
           model: openai/gpt-6.1-sol
-          variant: high
+          variant: medium
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
