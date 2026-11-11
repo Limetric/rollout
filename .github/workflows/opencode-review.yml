@@ -62,7 +62,7 @@ jobs:
     needs: scope
     if: needs.scope.outputs.should-review == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: write
@@ -149,7 +149,7 @@ jobs:
           # ./opencode.json, so local runs are unaffected.
           OPENCODE_CONFIG: ${{ github.workspace }}/.github/opencode-review.json
         with:
-          model: openai/gpt-6.1-terra
+          model: openai/gpt-6-astra
           variant: high
           prompt: |
             REPO: ${{ github.repository }}
