@@ -149,7 +149,7 @@ jobs:
           # ./opencode.json, so local runs are unaffected.
           OPENCODE_CONFIG: ${{ github.workspace }}/.github/opencode-review.json
         with:
-          model: openai/gpt-6-astra
+          model: openai/gpt-6.2-sol
           variant: high
           prompt: |
             REPO: ${{ github.repository }}
